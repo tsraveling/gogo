@@ -1,12 +1,14 @@
 package main
 
 import (
+	"time"
+
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
 
-// @region ogs:auth
+// @region ogs:auth-ui
 
 // openAuthMsg asks the root model to open the auth modal.
 type openAuthMsg struct{}
@@ -14,12 +16,26 @@ type openAuthMsg struct{}
 // closeAuthMsg asks the root model to dismiss the auth modal.
 type closeAuthMsg struct{}
 
-// ogsAuthModel is the modal login form: username + password. UI only;
-// actual OGS auth is stubbed until the hookup section.
+// authResultMsg carries the outcome of an OGS login attempt.
+type authResultMsg struct {
+	ogs ogsModel
+	err error
+}
+
+// welcomeDoneMsg fires after the success banner has been shown.
+type welcomeDoneMsg struct{}
+
+// welcomeDuration is how long the green "Welcome!" shows before the modal closes.
+const welcomeDuration = 800 * time.Millisecond
+
+// ogsAuthModel is the modal login form: username + password.
 type ogsAuthModel struct {
-	username textinput.Model
-	password textinput.Model
-	focus    int // 0 = username, 1 = password
+	username   textinput.Model
+	password   textinput.Model
+	focus      int  // 0 = username, 1 = password
+	submitting bool // request in flight
+	success    bool // showing welcome banner
+	errText    string
 }
 
 func newOGSAuthModel() ogsAuthModel {
@@ -51,21 +67,47 @@ func (m *ogsAuthModel) setFocus(i int) {
 	}
 }
 
-// reset clears entered text and returns focus to username.
+// reset clears entered text and transient state, returning focus to username.
 func (m *ogsAuthModel) reset() {
 	m.username.Reset()
 	m.password.Reset()
+	m.submitting = false
+	m.success = false
+	m.errText = ""
 	m.setFocus(0)
 }
 
-// attemptAuth is a stub; auth wiring lands in the hookup section.
-func (m ogsAuthModel) attemptAuth() error {
-	return nil
+// prefillUsername seeds the username field (e.g. from a prior login).
+func (m *ogsAuthModel) prefillUsername(name string) {
+	m.username.SetValue(name)
+}
+
+// submit dispatches the login request as a command.
+func (m ogsAuthModel) submit() tea.Cmd {
+	user, pass := m.username.Value(), m.password.Value()
+	return func() tea.Msg {
+		ogs, err := authenticatePassword(user, pass)
+		return authResultMsg{ogs: ogs, err: err}
+	}
 }
 
 func (m ogsAuthModel) Update(msg tea.Msg) (ogsAuthModel, tea.Cmd) {
 	switch msg := msg.(type) {
+	case authResultMsg:
+		m.submitting = false
+		if msg.err != nil {
+			m.errText = msg.err.Error()
+			return m, nil
+		}
+		m.success = true
+		m.errText = ""
+		return m, tea.Tick(welcomeDuration, func(time.Time) tea.Msg { return welcomeDoneMsg{} })
+
 	case tea.KeyMsg:
+		// Ignore input while a request is in flight or on the success banner.
+		if m.submitting || m.success {
+			return m, nil
+		}
 		switch msg.String() {
 		case "esc":
 			m.reset()
@@ -78,12 +120,9 @@ func (m ogsAuthModel) Update(msg tea.Msg) (ogsAuthModel, tea.Cmd) {
 				m.setFocus(1)
 				return m, nil
 			}
-			// enter on password: attempt (stubbed) auth, close on success.
-			if err := m.attemptAuth(); err == nil {
-				m.reset()
-				return m, func() tea.Msg { return closeAuthMsg{} }
-			}
-			return m, nil
+			m.errText = ""
+			m.submitting = true
+			return m, m.submit()
 		}
 	}
 
@@ -97,6 +136,18 @@ func (m ogsAuthModel) Update(msg tea.Msg) (ogsAuthModel, tea.Cmd) {
 }
 
 func (m ogsAuthModel) View(w, h int) string {
+	var status string
+	switch {
+	case m.success:
+		status = successStyle.Render("Welcome!")
+	case m.submitting:
+		status = dimStyle.Render("Signing in…")
+	case m.errText != "":
+		status = errorStyle.Render(m.errText)
+	default:
+		status = dimStyle.Render("tab: switch field · enter: next/submit · esc: cancel")
+	}
+
 	form := lipgloss.JoinVertical(lipgloss.Left,
 		titleStyle.Render("Sign in to OGS"),
 		"",
@@ -106,7 +157,7 @@ func (m ogsAuthModel) View(w, h int) string {
 		"Password",
 		m.password.View(),
 		"",
-		dimStyle.Render("tab: switch field · enter: next/submit · esc: cancel"),
+		status,
 	)
 	box := modalStyle.Render(form)
 	return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, box)

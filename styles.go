@@ -21,7 +21,9 @@ var (
 	itemStyle         = lipgloss.NewStyle().Foreground(dimColor)
 	selectedItemStyle = lipgloss.NewStyle().Bold(true).Foreground(primaryColor)
 
-	dimStyle = lipgloss.NewStyle().Foreground(dimColor)
+	dimStyle     = lipgloss.NewStyle().Foreground(dimColor)
+	errorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
+	successStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("46"))
 
 	// Auth modal box.
 	modalStyle = lipgloss.NewStyle().

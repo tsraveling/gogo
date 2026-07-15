@@ -9,8 +9,9 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// static tail options; do nothing for now.
-var homeOptions = []string{"Sign in to OGS", "Play vs. GnuGo"}
+// menu labels. signInOption is hidden once authenticated.
+const signInOption = "Sign in to OGS"
+const gnuGoOption = "Play vs. GnuGo"
 
 // homeItem is a single menu entry.
 type homeItem string
@@ -34,35 +35,71 @@ func (homeDelegate) Render(w io.Writer, m list.Model, index int, item list.Item)
 }
 
 // homeModel is the first tab: a centered, navigable menu. No background.
-// Will eventually list active games above the two static options.
+// Will eventually list active games above the static options.
 type homeModel struct {
-	list list.Model
+	list        list.Model
+	authed      bool
+	authPending bool // validating a stored login; sign-in stays hidden
+}
+
+// homeMenuOptions returns the menu labels for the current auth state; the
+// sign-in entry is dropped while authenticated or still validating a login.
+func homeMenuOptions(authed, pending bool) []string {
+	if authed || pending {
+		return []string{gnuGoOption}
+	}
+	return []string{signInOption, gnuGoOption}
 }
 
 func newHomeModel() homeModel {
-	items := make([]list.Item, len(homeOptions))
-	maxW := 0
-	for i, o := range homeOptions {
-		items[i] = homeItem(o)
-		if w := lipgloss.Width(o) + 2; w > maxW {
-			maxW = w
-		}
-	}
-
-	l := list.New(items, homeDelegate{}, maxW, len(items))
+	l := list.New(nil, homeDelegate{}, 0, 0)
 	l.SetShowTitle(false)
 	l.SetShowStatusBar(false)
 	l.SetShowHelp(false)
 	l.SetShowPagination(false)
 	l.SetFilteringEnabled(false)
-	l.SetSize(maxW, len(items)) // recompute layout now that chrome is off
 
-	return homeModel{list: l}
+	h := homeModel{list: l}
+	h.rebuild()
+	return h
+}
+
+// rebuild repopulates the list for the current auth state and sizes it.
+func (h *homeModel) rebuild() {
+	opts := homeMenuOptions(h.authed, h.authPending)
+	items := make([]list.Item, len(opts))
+	maxW := 0
+	for i, o := range opts {
+		items[i] = homeItem(o)
+		if w := lipgloss.Width(o) + 2; w > maxW {
+			maxW = w
+		}
+	}
+	h.list.SetItems(items)
+	h.list.SetSize(maxW, len(items))
+}
+
+// setAuthed updates auth state and refreshes the menu.
+func (h *homeModel) setAuthed(authed bool) {
+	if h.authed == authed {
+		return
+	}
+	h.authed = authed
+	h.rebuild()
+}
+
+// setAuthPending toggles the validating-a-stored-login state.
+func (h *homeModel) setAuthPending(pending bool) {
+	if h.authPending == pending {
+		return
+	}
+	h.authPending = pending
+	h.rebuild()
 }
 
 func (h homeModel) Update(msg tea.Msg) (homeModel, tea.Cmd) {
 	if key, ok := msg.(tea.KeyMsg); ok && key.String() == "enter" {
-		if item, ok := h.list.SelectedItem().(homeItem); ok && string(item) == homeOptions[0] {
+		if item, ok := h.list.SelectedItem().(homeItem); ok && string(item) == signInOption {
 			return h, func() tea.Msg { return openAuthMsg{} }
 		}
 	}

@@ -2,14 +2,49 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // @region ogs:auth
 
 // authFileName lives under ~/.config/gogo/.
 const authFileName = "auth.json"
+
+// ogsBaseURL is the OGS host; oauthURL is its token endpoint (trailing slash required).
+const ogsBaseURL = "https://online-go.com"
+const oauthTokenURL = ogsBaseURL + "/oauth2/token/"
+const meURL = ogsBaseURL + "/api/v1/me"
+
+// Our registered OGS OAuth application id. It is a public
+// client (aka not a secret), so it ships in source.
+const oauthClientID = "JsbA91sZqZ5ytnZhTDRwiCa2T8AK3zIw8bS9fjsj"
+
+var httpClient = &http.Client{}
+
+// errInvalidRefresh signals a rejected refresh token (stale login).
+var errInvalidRefresh = errors.New("invalid refresh token")
+
+// oauthResponse is the OGS /oauth2/token/ payload.
+type oauthResponse struct {
+	AccessToken      string `json:"access_token"`
+	RefreshToken     string `json:"refresh_token"`
+	ExpiresIn        int    `json:"expires_in"`
+	TokenType        string `json:"token_type"`
+	Error            string `json:"error"`
+	ErrorDescription string `json:"error_description"`
+}
+
+// ogsPlayer is the subset of /api/v1/me we keep.
+type ogsPlayer struct {
+	ID       int64  `json:"id"`
+	Username string `json:"username"`
+}
 
 // ogsModel holds OGS auth state. Data only — no UI.
 type ogsModel struct {
@@ -77,6 +112,115 @@ func (o ogsModel) clear() error {
 	}
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return err
+	}
+	return nil
+}
+
+// @region ogs:auth-net
+
+// authenticatePassword exchanges credentials for tokens via the OAuth password
+// grant, then fetches the player profile. Returns a populated ogsModel on success.
+func authenticatePassword(username, password string) (ogsModel, error) {
+	if username == "" || password == "" {
+		return ogsModel{}, errors.New("username and password required")
+	}
+	v := url.Values{}
+	v.Set("client_id", oauthClientID)
+	v.Set("grant_type", "password")
+	v.Set("username", username)
+	v.Set("password", password)
+	return tokenExchange(v)
+}
+
+// authenticateRefresh trades a refresh token for a fresh access token.
+func authenticateRefresh(refreshToken string) (ogsModel, error) {
+	v := url.Values{}
+	v.Set("client_id", oauthClientID)
+	v.Set("grant_type", "refresh_token")
+	v.Set("refresh_token", refreshToken)
+	o, err := tokenExchange(v)
+	if err != nil {
+		return o, errInvalidRefresh
+	}
+	return o, nil
+}
+
+// tokenExchange POSTs the form to the token endpoint and resolves the player.
+func tokenExchange(v url.Values) (ogsModel, error) {
+	var res oauthResponse
+	if err := postForm(oauthTokenURL, v, &res); err != nil {
+		if res.Error != "" {
+			return ogsModel{}, errors.New(oauthErr(res))
+		}
+		return ogsModel{}, err
+	}
+	if res.Error != "" {
+		return ogsModel{}, errors.New(oauthErr(res))
+	}
+
+	player, err := fetchPlayer(res.AccessToken)
+	if err != nil {
+		return ogsModel{}, err
+	}
+	return ogsModel{
+		Username:     player.Username,
+		UserID:       player.ID,
+		AccessToken:  res.AccessToken,
+		RefreshToken: res.RefreshToken,
+	}, nil
+}
+
+// oauthErr prefers the human-readable description.
+func oauthErr(r oauthResponse) string {
+	if r.ErrorDescription != "" {
+		return r.ErrorDescription
+	}
+	return r.Error
+}
+
+// fetchPlayer reads /api/v1/me with the given access token.
+func fetchPlayer(accessToken string) (ogsPlayer, error) {
+	var p ogsPlayer
+	req, err := http.NewRequest(http.MethodGet, meURL, nil)
+	if err != nil {
+		return p, err
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return p, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return p, errors.New("failed to load profile: " + resp.Status)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return p, err
+	}
+	return p, json.Unmarshal(body, &p)
+}
+
+// postForm submits url-encoded values and unmarshals the JSON response.
+// A non-200 status still unmarshals the body so callers can read oauth errors.
+func postForm(rawURL string, v url.Values, out any) error {
+	req, err := http.NewRequest(http.MethodPost, rawURL, strings.NewReader(v.Encode()))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	_ = json.Unmarshal(body, out)
+	if resp.StatusCode != http.StatusOK {
+		return errors.New("oauth request failed: " + resp.Status)
 	}
 	return nil
 }
