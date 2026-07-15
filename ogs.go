@@ -13,10 +13,10 @@ import (
 
 // @region ogs:auth
 
-// authFileName lives under ~/.config/gogo/.
+// Lives under ~/.config/gogo/.
 const authFileName = "auth.json"
 
-// ogsBaseURL is the OGS host; oauthURL is its token endpoint (trailing slash required).
+// OGS host, token endpoint (trailing slash required), and profile endpoint.
 const ogsBaseURL = "https://online-go.com"
 const oauthTokenURL = ogsBaseURL + "/oauth2/token/"
 const meURL = ogsBaseURL + "/api/v1/me"
@@ -27,10 +27,10 @@ const oauthClientID = "JsbA91sZqZ5ytnZhTDRwiCa2T8AK3zIw8bS9fjsj"
 
 var httpClient = &http.Client{}
 
-// errInvalidRefresh signals a rejected refresh token (stale login).
+// Rejected refresh token (stale login).
 var errInvalidRefresh = errors.New("invalid refresh token")
 
-// oauthResponse is the OGS /oauth2/token/ payload.
+// OGS /oauth2/token/ payload.
 type oauthResponse struct {
 	AccessToken      string `json:"access_token"`
 	RefreshToken     string `json:"refresh_token"`
@@ -40,13 +40,13 @@ type oauthResponse struct {
 	ErrorDescription string `json:"error_description"`
 }
 
-// ogsPlayer is the subset of /api/v1/me we keep.
+// Subset of /api/v1/me we keep.
 type ogsPlayer struct {
 	ID       int64  `json:"id"`
 	Username string `json:"username"`
 }
 
-// ogsModel holds OGS auth state. Data only — no UI.
+// OGS auth state. Data only — no UI.
 type ogsModel struct {
 	Username     string `json:"username"`
 	UserID       int64  `json:"user_id"`
@@ -54,12 +54,12 @@ type ogsModel struct {
 	RefreshToken string `json:"refresh_token"`
 }
 
-// authenticated reports whether we hold tokens.
+// Reports whether we hold tokens.
 func (o ogsModel) authenticated() bool {
 	return o.AccessToken != "" && o.RefreshToken != ""
 }
 
-// authPath resolves ~/.config/gogo/auth.json.
+// Resolves ~/.config/gogo/auth.json.
 func authPath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -68,7 +68,7 @@ func authPath() (string, error) {
 	return filepath.Join(home, ".config", "gogo", authFileName), nil
 }
 
-// loadOGS reads persisted auth state. Missing file yields an empty (unauthed) model.
+// Reads persisted auth state. Missing file yields an empty (unauthed) model.
 func loadOGS() (ogsModel, error) {
 	var o ogsModel
 	path, err := authPath()
@@ -88,7 +88,7 @@ func loadOGS() (ogsModel, error) {
 	return o, nil
 }
 
-// save persists auth state to ~/.config/gogo/auth.json with 0600 perms.
+// Persists auth state to ~/.config/gogo/auth.json with 0600 perms.
 func (o ogsModel) save() error {
 	path, err := authPath()
 	if err != nil {
@@ -104,7 +104,7 @@ func (o ogsModel) save() error {
 	return os.WriteFile(path, data, 0o600)
 }
 
-// clear removes persisted auth state (logout).
+// Removes persisted auth state (logout).
 func (o ogsModel) clear() error {
 	path, err := authPath()
 	if err != nil {
@@ -118,8 +118,7 @@ func (o ogsModel) clear() error {
 
 // @region ogs:auth-net
 
-// authenticatePassword exchanges credentials for tokens via the OAuth password
-// grant, then fetches the player profile. Returns a populated ogsModel on success.
+// Exchanges credentials for tokens via the OAuth password grant, then fetches the profile.
 func authenticatePassword(username, password string) (ogsModel, error) {
 	if username == "" || password == "" {
 		return ogsModel{}, errors.New("username and password required")
@@ -132,7 +131,7 @@ func authenticatePassword(username, password string) (ogsModel, error) {
 	return tokenExchange(v)
 }
 
-// authenticateRefresh trades a refresh token for a fresh access token.
+// Trades a refresh token for a fresh access token.
 func authenticateRefresh(refreshToken string) (ogsModel, error) {
 	v := url.Values{}
 	v.Set("client_id", oauthClientID)
@@ -145,7 +144,7 @@ func authenticateRefresh(refreshToken string) (ogsModel, error) {
 	return o, nil
 }
 
-// tokenExchange POSTs the form to the token endpoint and resolves the player.
+// POSTs the form to the token endpoint and resolves the player.
 func tokenExchange(v url.Values) (ogsModel, error) {
 	var res oauthResponse
 	if err := postForm(oauthTokenURL, v, &res); err != nil {
@@ -170,7 +169,7 @@ func tokenExchange(v url.Values) (ogsModel, error) {
 	}, nil
 }
 
-// oauthErr prefers the human-readable description.
+// Prefers the human-readable description.
 func oauthErr(r oauthResponse) string {
 	if r.ErrorDescription != "" {
 		return r.ErrorDescription
@@ -178,7 +177,7 @@ func oauthErr(r oauthResponse) string {
 	return r.Error
 }
 
-// fetchPlayer reads /api/v1/me with the given access token.
+// Reads /api/v1/me with the given access token.
 func fetchPlayer(accessToken string) (ogsPlayer, error) {
 	var p ogsPlayer
 	req, err := http.NewRequest(http.MethodGet, meURL, nil)
@@ -201,7 +200,7 @@ func fetchPlayer(accessToken string) (ogsPlayer, error) {
 	return p, json.Unmarshal(body, &p)
 }
 
-// postForm submits url-encoded values and unmarshals the JSON response.
+// Submits url-encoded values and unmarshals the JSON response.
 // A non-200 status still unmarshals the body so callers can read oauth errors.
 func postForm(rawURL string, v url.Values, out any) error {
 	req, err := http.NewRequest(http.MethodPost, rawURL, strings.NewReader(v.Encode()))

@@ -7,9 +7,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// homeIcon labels the first (home) tab: Nerd Font house glyph (nf-fa-home),
-// or a plain-unicode house when GOGO_ASCII is set (no Nerd Font detection
-// is possible at runtime, so it's an opt-out).
+// First (home) tab label: Nerd Font house glyph, or plain unicode when GOGO_ASCII set.
 var homeIcon = func() string {
 	if os.Getenv("GOGO_ASCII") != "" {
 		return "⌂"
@@ -24,7 +22,7 @@ type model struct {
 	games    []gameModel
 	active   int // 0 = home tab; 1..n = games[active-1]
 	auth        ogsAuthModel
-	showAuth    bool // when true, the auth modal is open and captures all input
+	showAuth    bool // modal open, captures all input
 	ogs         ogsModel
 	authPending bool // stored login present, validating at launch
 }
@@ -39,8 +37,7 @@ func newModel() model {
 		},
 		auth: newOGSAuthModel(),
 	}
-	// A stored login means we'll validate it on launch: show "Logging in …"
-	// and keep the sign-in menu entry hidden until the check resolves.
+	// Stored login: validate on launch, hide sign-in until it resolves.
 	if o, err := loadOGS(); err == nil && o.authenticated() {
 		m.authPending = true
 		m.home.setAuthPending(true)
@@ -48,12 +45,12 @@ func newModel() model {
 	return m
 }
 
-// tabCount is the home tab plus one per game.
+// Home tab plus one per game.
 func (m model) tabCount() int {
 	return len(m.games) + 1
 }
 
-// authLoadedMsg reports the result of validating persisted auth at launch.
+// Result of validating persisted auth at launch.
 type authLoadedMsg struct {
 	ogs ogsModel
 	ok  bool
@@ -63,8 +60,7 @@ func (m model) Init() tea.Cmd {
 	return validateStoredAuth
 }
 
-// validateStoredAuth loads persisted tokens and refreshes them to confirm the
-// login still works. A stale login is cleared. Runs off the UI goroutine.
+// Refreshes persisted tokens to confirm the login still works; clears a stale one.
 func validateStoredAuth() tea.Msg {
 	o, err := loadOGS()
 	if err != nil || !o.authenticated() {
@@ -150,7 +146,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// renderTabs draws the top tab bar: home tab first, then one per game.
+// Top tab bar: home tab first, then one per game.
 func (m model) renderTabs() string {
 	labels := make([]string, 0, m.tabCount())
 	labels = append(labels, homeIcon)

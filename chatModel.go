@@ -1,6 +1,6 @@
 package main
 
-// chatModel shows the game chat log and (online) a text entry. Stub for now.
+// Shows the game chat log and (online) a text entry. Stub for now.
 type chatModel struct{}
 
 func newChatModel() chatModel {

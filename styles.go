@@ -32,7 +32,7 @@ var (
 			Padding(1, 3)
 )
 
-// renderPanel draws a flat colored rect of the given size with a centered label.
+// Draws a flat colored rect of the given size with a centered label.
 func renderPanel(label string, w, h int, bg lipgloss.Color) string {
 	return lipgloss.NewStyle().
 		Width(w).

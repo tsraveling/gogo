@@ -2,7 +2,7 @@ package main
 
 import "github.com/charmbracelet/lipgloss"
 
-// gameModel wraps a single active game: board column + meta column.
+// A single active game: board column + meta column.
 type gameModel struct {
 	name  string
 	board boardModel

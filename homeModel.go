@@ -9,16 +9,16 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// menu labels. signInOption is hidden once authenticated.
+// Menu labels; sign-in hidden once authenticated.
 const signInOption = "Sign in to OGS"
 const gnuGoOption = "Play vs. GnuGo"
 
-// homeItem is a single menu entry.
+// Single menu entry.
 type homeItem string
 
 func (i homeItem) FilterValue() string { return string(i) }
 
-// homeDelegate renders each entry on one line with a selection cursor.
+// Renders each entry on one line with a selection cursor.
 type homeDelegate struct{}
 
 func (homeDelegate) Height() int                         { return 1 }
@@ -34,7 +34,7 @@ func (homeDelegate) Render(w io.Writer, m list.Model, index int, item list.Item)
 	fmt.Fprint(w, itemStyle.Render("  "+label))
 }
 
-// homeModel is the first tab: a centered, navigable menu. No background.
+// First tab: a centered, navigable menu. No background.
 // Will eventually list active games above the static options.
 type homeModel struct {
 	list        list.Model
@@ -42,8 +42,7 @@ type homeModel struct {
 	authPending bool // validating a stored login; sign-in stays hidden
 }
 
-// homeMenuOptions returns the menu labels for the current auth state; the
-// sign-in entry is dropped while authenticated or still validating a login.
+// Menu labels for the current auth state; sign-in dropped while authed or validating.
 func homeMenuOptions(authed, pending bool) []string {
 	if authed || pending {
 		return []string{gnuGoOption}
@@ -64,7 +63,7 @@ func newHomeModel() homeModel {
 	return h
 }
 
-// rebuild repopulates the list for the current auth state and sizes it.
+// Repopulates the list for the current auth state and sizes it.
 func (h *homeModel) rebuild() {
 	opts := homeMenuOptions(h.authed, h.authPending)
 	items := make([]list.Item, len(opts))
@@ -79,7 +78,7 @@ func (h *homeModel) rebuild() {
 	h.list.SetSize(maxW, len(items))
 }
 
-// setAuthed updates auth state and refreshes the menu.
+// Updates auth state and refreshes the menu.
 func (h *homeModel) setAuthed(authed bool) {
 	if h.authed == authed {
 		return
@@ -88,7 +87,7 @@ func (h *homeModel) setAuthed(authed bool) {
 	h.rebuild()
 }
 
-// setAuthPending toggles the validating-a-stored-login state.
+// Toggles the validating-a-stored-login state.
 func (h *homeModel) setAuthPending(pending bool) {
 	if h.authPending == pending {
 		return

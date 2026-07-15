@@ -10,25 +10,25 @@ import (
 
 // @region ogs:auth-ui
 
-// openAuthMsg asks the root model to open the auth modal.
+// Asks the root model to open the auth modal.
 type openAuthMsg struct{}
 
-// closeAuthMsg asks the root model to dismiss the auth modal.
+// Asks the root model to dismiss the auth modal.
 type closeAuthMsg struct{}
 
-// authResultMsg carries the outcome of an OGS login attempt.
+// Outcome of an OGS login attempt.
 type authResultMsg struct {
 	ogs ogsModel
 	err error
 }
 
-// welcomeDoneMsg fires after the success banner has been shown.
+// Fires after the success banner has been shown.
 type welcomeDoneMsg struct{}
 
-// welcomeDuration is how long the green "Welcome!" shows before the modal closes.
+// How long the green "Welcome!" shows before the modal closes.
 const welcomeDuration = 800 * time.Millisecond
 
-// ogsAuthModel is the modal login form: username + password.
+// Modal login form: username + password.
 type ogsAuthModel struct {
 	username   textinput.Model
 	password   textinput.Model
@@ -55,7 +55,7 @@ func newOGSAuthModel() ogsAuthModel {
 	return m
 }
 
-// setFocus moves the cursor to field i (0=username, 1=password).
+// Moves the cursor to field i (0=username, 1=password).
 func (m *ogsAuthModel) setFocus(i int) {
 	m.focus = i
 	if i == 0 {
@@ -67,7 +67,7 @@ func (m *ogsAuthModel) setFocus(i int) {
 	}
 }
 
-// reset clears entered text and transient state, returning focus to username.
+// Clears entered text and transient state, returning focus to username.
 func (m *ogsAuthModel) reset() {
 	m.username.Reset()
 	m.password.Reset()
@@ -77,12 +77,12 @@ func (m *ogsAuthModel) reset() {
 	m.setFocus(0)
 }
 
-// prefillUsername seeds the username field (e.g. from a prior login).
+// Seeds the username field (e.g. from a prior login).
 func (m *ogsAuthModel) prefillUsername(name string) {
 	m.username.SetValue(name)
 }
 
-// submit dispatches the login request as a command.
+// Dispatches the login request as a command.
 func (m ogsAuthModel) submit() tea.Cmd {
 	user, pass := m.username.Value(), m.password.Value()
 	return func() tea.Msg {

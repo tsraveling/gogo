@@ -1,6 +1,6 @@
 package main
 
-// infoModel shows metadata about the game. Stub for now.
+// Shows metadata about the game. Stub for now.
 type infoModel struct{}
 
 func newInfoModel() infoModel {
