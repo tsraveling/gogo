@@ -61,6 +61,11 @@ func newHomeModel() homeModel {
 }
 
 func (h homeModel) Update(msg tea.Msg) (homeModel, tea.Cmd) {
+	if key, ok := msg.(tea.KeyMsg); ok && key.String() == "enter" {
+		if item, ok := h.list.SelectedItem().(homeItem); ok && string(item) == homeOptions[0] {
+			return h, func() tea.Msg { return openAuthMsg{} }
+		}
+	}
 	var cmd tea.Cmd
 	h.list, cmd = h.list.Update(msg)
 	return h, cmd

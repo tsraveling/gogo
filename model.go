@@ -18,11 +18,13 @@ var homeIcon = func() string {
 }()
 
 type model struct {
-	width  int
-	height int
-	home   homeModel
-	games  []gameModel
-	active int // 0 = home tab; 1..n = games[active-1]
+	width    int
+	height   int
+	home     homeModel
+	games    []gameModel
+	active   int // 0 = home tab; 1..n = games[active-1]
+	auth     ogsAuthModel
+	showAuth bool // when true, the auth modal is open and captures all input
 }
 
 func newModel() model {
@@ -33,6 +35,7 @@ func newModel() model {
 			newGameModel("13x13", 13, 13),
 			newGameModel("19x19", 19, 19),
 		},
+		auth: newOGSAuthModel(),
 	}
 }
 
@@ -50,7 +53,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+	case openAuthMsg:
+		m.showAuth = true
+		return m, nil
+	case closeAuthMsg:
+		m.showAuth = false
+		return m, nil
 	case tea.KeyMsg:
+		// Modal captures all input; tabs and quit keys are disabled.
+		if m.showAuth {
+			var cmd tea.Cmd
+			m.auth, cmd = m.auth.Update(msg)
+			return m, cmd
+		}
 		switch msg.String() {
 		case "q", "ctrl+c", "esc":
 			return m, tea.Quit
@@ -93,6 +108,11 @@ func (m model) renderTabs() string {
 func (m model) View() string {
 	if m.width == 0 {
 		return titleStyle.Render("GoGo")
+	}
+
+	// Modal takes the full screen; tab bar hidden while open.
+	if m.showAuth {
+		return m.auth.View(m.width, m.height)
 	}
 
 	tabs := m.renderTabs()

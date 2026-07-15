@@ -20,6 +20,14 @@ var (
 	// Home menu entries.
 	itemStyle         = lipgloss.NewStyle().Foreground(dimColor)
 	selectedItemStyle = lipgloss.NewStyle().Bold(true).Foreground(primaryColor)
+
+	dimStyle = lipgloss.NewStyle().Foreground(dimColor)
+
+	// Auth modal box.
+	modalStyle = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(primaryColor).
+			Padding(1, 3)
 )
 
 // renderPanel draws a flat colored rect of the given size with a centered label.
