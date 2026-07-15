@@ -26,12 +26,17 @@ type model struct {
 	showAuth    bool // modal open, captures all input
 	ogs         ogsModel
 	authPending bool // stored login present, validating at launch
+
+	events       chan gameEvent // socket snapshots, drained by waitForGameEvent
+	socket       *gameSocket    // focused game's connection; nil when on home
+	socketGameID int64          // game id the socket is (or is being) opened for
 }
 
 func newModel() model {
 	m := model{
-		home: newHomeModel(),
-		auth: newOGSAuthModel(),
+		home:   newHomeModel(),
+		auth:   newOGSAuthModel(),
+		events: make(chan gameEvent, 16),
 	}
 	// Restore open tabs; their game models are built once the game list loads.
 	if tabs, err := loadTabs(); err == nil {
@@ -74,6 +79,44 @@ func (m *model) closeTab(i int) {
 	if m.active > len(m.games) {
 		m.active = len(m.games)
 	}
+}
+
+// Finds an open game by id; nil if none (id 0 is never a match).
+func (m *model) gameByID(id int64) *gameModel {
+	if id == 0 {
+		return nil
+	}
+	for i := range m.games {
+		if m.games[i].game.id == id {
+			return &m.games[i]
+		}
+	}
+	return nil
+}
+
+// Reconciles the single socket connection with the focused tab: disconnects the
+// old game, connects the newly focused one. Returns a cmd that dials the new
+// socket (nil when the focused tab is home or already connected).
+func (m *model) syncFocus() tea.Cmd {
+	var want int64
+	if m.active > 0 {
+		want = m.games[m.active-1].game.id
+	}
+	if want == m.socketGameID {
+		return nil
+	}
+	// Tear down the previous connection and clear its loading state.
+	m.socket.Disconnect()
+	m.socket = nil
+	if prev := m.gameByID(m.socketGameID); prev != nil {
+		prev.connecting = false
+	}
+	m.socketGameID = want
+	if want == 0 {
+		return nil
+	}
+	spin := m.games[m.active-1].beginConnect()
+	return tea.Batch(connectGameCmd(want, m.ogs.UserID, m.events), spin)
 }
 
 // Rebuilds game models for restored tabs once the game list is known. Drops
@@ -132,10 +175,11 @@ func fetchGamesCmd(o ogsModel) tea.Cmd {
 }
 
 func (m model) Init() tea.Cmd {
+	// waitForGameEvent runs for the app's lifetime, draining socket snapshots.
 	if m.authPending {
-		return tea.Batch(validateStoredAuth, m.home.spinner.Tick)
+		return tea.Batch(validateStoredAuth, m.home.spinner.Tick, waitForGameEvent(m.events))
 	}
-	return validateStoredAuth
+	return tea.Batch(validateStoredAuth, waitForGameEvent(m.events))
 }
 
 // Refreshes persisted tokens to confirm the login still works; clears a stale one.
@@ -175,6 +219,27 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case openGameMsg:
 		m.openGame(msg.game)
+		return m, m.syncFocus()
+	case gameEvent:
+		if gm := m.gameByID(msg.gameID); gm != nil {
+			gm.applySnapshot(msg.state)
+		}
+		return m, waitForGameEvent(m.events) // keep listening
+	case socketConnectedMsg:
+		// Focus moved on while dialing: drop the now-stale connection.
+		if msg.gameID != m.socketGameID {
+			msg.socket.Disconnect()
+			return m, nil
+		}
+		if msg.err != nil {
+			if gm := m.gameByID(msg.gameID); gm != nil {
+				gm.connecting = false
+				gm.connectErr = true
+			}
+			m.socketGameID = 0
+			return m, nil
+		}
+		m.socket = msg.socket
 		return m, nil
 	case navErrorExpiredMsg:
 		if msg.game >= 0 && msg.game < len(m.games) {
@@ -230,7 +295,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// X closes the focused game tab (home tab can't close).
 		if msg.String() == "X" && m.active > 0 {
 			m.closeTab(m.active - 1)
-			return m, nil
+			return m, m.syncFocus()
 		}
 		// r refetches the game list when authenticated.
 		if msg.String() == "r" && m.ogs.authenticated() {
@@ -238,13 +303,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		switch msg.String() {
 		case "q", "ctrl+c", "esc":
+			m.socket.Disconnect() // release the focused game's socket on quit
 			return m, tea.Quit
 		case "tab", "]":
 			m.active = (m.active + 1) % m.tabCount()
-			return m, nil
+			return m, m.syncFocus()
 		case "shift+tab", "[":
 			m.active = (m.active - 1 + m.tabCount()) % m.tabCount()
-			return m, nil
+			return m, m.syncFocus()
 		}
 		// Delegate remaining keys to the active tab.
 		var cmd tea.Cmd
@@ -255,10 +321,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, cmd
 	default:
-		// Non-key messages (e.g. spinner ticks) go to the home tab.
+		// Non-key messages (spinner ticks, cursor blinks) fan out to the home
+		// tab and the focused game; each ignores ticks that aren't its own.
+		var cmds []tea.Cmd
 		var cmd tea.Cmd
 		m.home, cmd = m.home.Update(msg)
-		return m, cmd
+		cmds = append(cmds, cmd)
+		if m.active > 0 {
+			m.games[m.active-1], cmd = m.games[m.active-1].Update(msg)
+			cmds = append(cmds, cmd)
+		}
+		return m, tea.Batch(cmds...)
 	}
 	return m, nil
 }

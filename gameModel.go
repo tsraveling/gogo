@@ -4,6 +4,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -14,14 +15,17 @@ const navErrorTTL = 800 * time.Millisecond
 
 // A single active game: board column + meta column.
 type gameModel struct {
-	idx     int  // index into the parent's games slice, for routed messages
-	game    game // core game state this tab tracks
-	board   boardModel
-	info    infoModel
-	chat    chatModel
-	navMode bool // "Go to" prompt is open, capturing input
-	navErr  bool // last entry was invalid; flashing
-	navGoto textinput.Model
+	idx        int  // index into the parent's games slice, for routed messages
+	game       game // core game state this tab tracks
+	board      boardModel
+	info       infoModel
+	chat       chatModel
+	navMode    bool // "Go to" prompt is open, capturing input
+	navErr     bool // last entry was invalid; flashing
+	navGoto    textinput.Model
+	spinner    spinner.Model
+	connecting bool // awaiting the first gamedata snapshot
+	connectErr bool // the socket failed to connect
 }
 
 func newGameModel(idx int, g game) gameModel {
@@ -30,6 +34,9 @@ func newGameModel(idx int, g game) gameModel {
 	ti.Placeholder = "A1"
 	ti.CharLimit = 4
 	ti.Width = 4
+	sp := spinner.New()
+	sp.Spinner = spinner.Dot
+	sp.Style = lipgloss.NewStyle().Foreground(primaryColor)
 	return gameModel{
 		idx:     idx,
 		game:    g,
@@ -37,7 +44,28 @@ func newGameModel(idx int, g game) gameModel {
 		info:    newInfoModel(),
 		chat:    newChatModel(),
 		navGoto: ti,
+		spinner: sp,
 	}
+}
+
+// Marks the game as connecting; returns the spinner tick to start it. A game
+// that already holds a snapshot refetches silently (no spinner).
+func (g *gameModel) beginConnect() tea.Cmd {
+	g.connectErr = false
+	if g.board.grid != nil {
+		g.connecting = false
+		return nil
+	}
+	g.connecting = true
+	return g.spinner.Tick
+}
+
+// Applies a live snapshot: feeds the board and updates turn/phase state.
+func (g *gameModel) applySnapshot(st boardState) {
+	g.board.setState(st.grid)
+	g.game.state = st
+	g.connecting = false
+	g.connectErr = false
 }
 
 // Dismisses the invalid-position flash on a specific game.
@@ -57,6 +85,13 @@ func (g gameModel) Update(msg tea.Msg) (gameModel, tea.Cmd) {
 	case navErrorExpiredMsg:
 		g.navErr = false
 		return g, nil
+	case spinner.TickMsg:
+		if !g.connecting {
+			return g, nil
+		}
+		var cmd tea.Cmd
+		g.spinner, cmd = g.spinner.Update(msg)
+		return g, cmd
 	case tea.KeyMsg:
 		if g.navMode {
 			return g.updateNav(msg)
@@ -120,8 +155,17 @@ func (g *gameModel) closeNav() {
 func (g gameModel) View(termW, termH int) string {
 	boardW := g.board.renderWidth()
 
-	// Board column: board on top, 2-row control below.
-	boardCol := lipgloss.JoinVertical(lipgloss.Left, g.board.View(), g.controlView(boardW))
+	// Board column: the grid + control rows, or a centered loading/error box
+	// while the socket connects and before the first snapshot arrives.
+	var boardCol string
+	switch {
+	case g.connectErr:
+		boardCol = g.centeredBoardBox(boardW, errorStyle.Render("Connection failed"))
+	case g.connecting:
+		boardCol = g.centeredBoardBox(boardW, g.spinner.View()+dimStyle.Render(" Loading board…"))
+	default:
+		boardCol = lipgloss.JoinVertical(lipgloss.Left, g.board.View(), g.controlView(boardW))
+	}
 	colHeight := lipgloss.Height(boardCol)
 
 	// Layout: 2-col left margin, board, 3-col gap, then the meta column.
@@ -141,6 +185,13 @@ func (g gameModel) View(termW, termH int) string {
 		strings.Repeat(" ", leftMargin), boardCol,
 		strings.Repeat(" ", colGap), metaCol,
 	)
+}
+
+// A box the size of the board + control rows, with centered content. Keeps the
+// column layout stable between the loading state and the rendered board.
+func (g gameModel) centeredBoardBox(w int, content string) string {
+	h := g.board.renderHeight() + 2 // board rows + the 2 control rows
+	return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, content)
 }
 
 // Two-row board control: the "Go to" prompt (with error flash) or a key hint.

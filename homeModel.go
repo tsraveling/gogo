@@ -58,7 +58,8 @@ func newHomeModel() homeModel {
 // Rebuilds rows for the current games/auth state and keeps the cursor valid.
 func (h *homeModel) rebuild() {
 	var e []homeEntry
-	if h.loading {
+	// Only show the games-loading row while authed (or validating a stored login).
+	if h.loading && (h.authed || h.authPending) {
 		e = append(e, homeEntry{kind: entryLoading})
 	}
 	for _, g := range h.games {
