@@ -20,7 +20,7 @@ var (
 	activeTabStyle = lipgloss.NewStyle().Padding(0, 2).Bold(true).Foreground(lipgloss.Color("231")).Background(primaryColor)
 
 	// Home menu entries.
-	itemStyle         = lipgloss.NewStyle().Foreground(dimColor)
+	itemStyle         = lipgloss.NewStyle().Foreground(unemphColor)
 	selectedItemStyle = lipgloss.NewStyle().Bold(true).Foreground(primaryColor)
 
 	// Home list game entries. Name uses active color for selection, bold for

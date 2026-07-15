@@ -37,9 +37,11 @@ func newModel() model {
 		},
 		auth: newOGSAuthModel(),
 	}
-	// Stored login: validate on launch, hide sign-in until it resolves.
+	// Stored login: validate on launch, hide sign-in until it resolves,
+	// show the games loading indicator (tick started in Init).
 	if o, err := loadOGS(); err == nil && o.authenticated() {
 		m.authPending = true
+		m.home.loading = true
 		m.home.setAuthPending(true)
 	}
 	return m
@@ -73,6 +75,9 @@ func fetchGamesCmd(o ogsModel) tea.Cmd {
 }
 
 func (m model) Init() tea.Cmd {
+	if m.authPending {
+		return tea.Batch(validateStoredAuth, m.home.spinner.Tick)
+	}
 	return validateStoredAuth
 }
 
@@ -104,7 +109,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.ok {
 			m.ogs = msg.ogs
 			m.home.setAuthed(true)
-			return m, fetchGamesCmd(m.ogs)
+			return m, tea.Batch(fetchGamesCmd(m.ogs), m.home.startLoading())
 		}
 		return m, nil
 	case gamesLoadedMsg:
@@ -130,7 +135,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.ogs = msg.ogs
 			_ = m.ogs.save()
 			m.home.setAuthed(true)
-			return m, tea.Batch(cmd, fetchGamesCmd(m.ogs))
+			return m, tea.Batch(cmd, fetchGamesCmd(m.ogs), m.home.startLoading())
 		}
 		return m, cmd
 	case tea.KeyMsg:
@@ -150,7 +155,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// r refetches the game list when authenticated.
 		if msg.String() == "r" && m.ogs.authenticated() {
-			return m, fetchGamesCmd(m.ogs)
+			return m, tea.Batch(fetchGamesCmd(m.ogs), m.home.startLoading())
 		}
 		switch msg.String() {
 		case "q", "ctrl+c", "esc":
@@ -168,6 +173,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.home, cmd = m.home.Update(msg)
 			return m, cmd
 		}
+	default:
+		// Non-key messages (e.g. spinner ticks) go to the home tab.
+		var cmd tea.Cmd
+		m.home, cmd = m.home.Update(msg)
+		return m, cmd
 	}
 	return m, nil
 }

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -18,16 +19,19 @@ const (
 	entryGame homeEntryKind = iota
 	entryAction
 	entrySpacer // non-selectable gap
+	entryLoading
 )
 
-// One home-list row: an active game, an action, or a spacer.
+// One home-list row: an active game, an action, a spacer, or a loading indicator.
 type homeEntry struct {
 	kind   homeEntryKind
 	action string // entryAction label
 	game   game   // entryGame data
 }
 
-func (e homeEntry) selectable() bool { return e.kind != entrySpacer }
+func (e homeEntry) selectable() bool {
+	return e.kind == entryGame || e.kind == entryAction
+}
 
 // First tab: a centered, navigable menu. No background.
 // Lists active games first, then actions.
@@ -35,12 +39,17 @@ type homeModel struct {
 	entries     []homeEntry
 	cursor      int // index into entries, always on a selectable row
 	games       []game
+	spinner     spinner.Model
+	loading     bool // fetching the game list
 	authed      bool
 	authPending bool // validating a stored login; sign-in stays hidden
 }
 
 func newHomeModel() homeModel {
-	h := homeModel{}
+	s := spinner.New()
+	s.Spinner = spinner.Dot
+	s.Style = lipgloss.NewStyle().Foreground(primaryColor)
+	h := homeModel{spinner: s}
 	h.rebuild()
 	return h
 }
@@ -48,6 +57,9 @@ func newHomeModel() homeModel {
 // Rebuilds rows for the current games/auth state and keeps the cursor valid.
 func (h *homeModel) rebuild() {
 	var e []homeEntry
+	if h.loading {
+		e = append(e, homeEntry{kind: entryLoading})
+	}
 	for _, g := range h.games {
 		e = append(e, homeEntry{kind: entryGame, game: g})
 	}
@@ -94,10 +106,22 @@ func (h *homeModel) moveCursor(dir int) {
 	}
 }
 
-// setGames replaces the active-games list and rebuilds.
+// setGames replaces the active-games list, ends loading, and rebuilds.
 func (h *homeModel) setGames(games []game) {
 	h.games = games
+	h.loading = false
 	h.rebuild()
+}
+
+// startLoading shows the loading row and returns the spinner's first tick.
+// No-op (nil) when already loading, so the tick loop isn't doubled.
+func (h *homeModel) startLoading() tea.Cmd {
+	if h.loading {
+		return nil
+	}
+	h.loading = true
+	h.rebuild()
+	return h.spinner.Tick
 }
 
 // setAuthed updates auth state and refreshes the menu.
@@ -119,6 +143,14 @@ func (h *homeModel) setAuthPending(pending bool) {
 }
 
 func (h homeModel) Update(msg tea.Msg) (homeModel, tea.Cmd) {
+	if _, ok := msg.(spinner.TickMsg); ok {
+		if !h.loading {
+			return h, nil
+		}
+		var cmd tea.Cmd
+		h.spinner, cmd = h.spinner.Update(msg)
+		return h, cmd
+	}
 	key, ok := msg.(tea.KeyMsg)
 	if !ok {
 		return h, nil
@@ -153,10 +185,14 @@ func (h homeModel) View(w, hgt int) string {
 			rows = append(rows, renderActionEntry(e.action, selected))
 		case entrySpacer:
 			rows = append(rows, "")
+		case entryLoading:
+			rows = append(rows, gutter(h.spinner.View()+gameMetaStyle.Render(" Loading games…"), false))
 		}
 	}
-	menu := lipgloss.JoinVertical(lipgloss.Left, rows...)
-	return lipgloss.Place(w, hgt, lipgloss.Center, lipgloss.Center, menu)
+	// Fixed 8-col left margin, vertically centered — avoids horizontal jitter
+	// as row widths change (loading → games).
+	menu := lipgloss.NewStyle().MarginLeft(8).Render(lipgloss.JoinVertical(lipgloss.Left, rows...))
+	return lipgloss.Place(w, hgt, lipgloss.Left, lipgloss.Center, menu)
 }
 
 // A two-line game row: name + size, then both players with color markers.
