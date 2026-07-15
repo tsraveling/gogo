@@ -15,6 +15,10 @@ var (
 	boardLabelStyle  = lipgloss.NewStyle().Foreground(dimColor)
 	boardCursorStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("231"))
 
+	// Stones: black is a dim steel gray, white a bright white.
+	stoneBlackStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	stoneWhiteStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("231"))
+
 	// Stub panel backgrounds — placeholder until real content lands.
 	boardBg   = lipgloss.Color("236")
 	controlBg = lipgloss.Color("238")

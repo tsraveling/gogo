@@ -13,15 +13,27 @@ const coordLetters = "ABCDEFGHJKLMNOPQRSTUVWXYZ"
 
 // Renders a single game's board state.
 type boardModel struct {
-	width        int // board size in points (e.g. 9 for 9x9)
-	height       int
-	interactable bool // show and move a cursor
+	width        int            // board size in points (e.g. 9 for 9x9)
+	height       int            // board size in points
+	grid         [][]stoneColor // current stones, [y][x]; nil renders an empty board
+	interactable bool           // show and move a cursor
 	cursorX      int
 	cursorY      int
 }
 
 func newBoardModel(w, h int) boardModel {
 	return boardModel{width: w, height: h, interactable: true, cursorX: w / 2, cursorY: h / 2}
+}
+
+// Feeds the renderer a stone grid ([y][x]). Reused later for replay/variants.
+func (b *boardModel) setState(grid [][]stoneColor) { b.grid = grid }
+
+// Stone at the point, or empty when off-grid / no grid loaded.
+func (b boardModel) stoneAt(x, y int) stoneColor {
+	if y < 0 || y >= len(b.grid) || x < 0 || x >= len(b.grid[y]) {
+		return empty
+	}
+	return b.grid[y][x]
 }
 
 // @region board:navigation
@@ -124,7 +136,7 @@ func (b boardModel) boardRow(y int) string {
 		sb.WriteByte(' ')
 	}
 	for x := 0; x < b.width; x++ {
-		sb.WriteString(boardPointStyle.Render(b.pointChar(x, y)))
+		sb.WriteString(b.cellStr(x, y))
 		if x == b.width-1 {
 			break
 		}
@@ -145,12 +157,21 @@ func (b boardModel) boardRow(y int) string {
 	return sb.String()
 }
 
-// "+" star point, else "." empty.
-func (b boardModel) pointChar(x, y int) string {
-	if b.isStar(x, y) {
-		return "+"
+// Stone glyph for occupied points.
+const stoneGlyph = "●"
+
+// One point: a colored stone if occupied, else a yellow "+" star / "." empty.
+func (b boardModel) cellStr(x, y int) string {
+	switch b.stoneAt(x, y) {
+	case black:
+		return stoneBlackStyle.Render(stoneGlyph)
+	case white:
+		return stoneWhiteStyle.Render(stoneGlyph)
 	}
-	return "."
+	if b.isStar(x, y) {
+		return boardPointStyle.Render("+")
+	}
+	return boardPointStyle.Render(".")
 }
 
 // Star point (hoshi) test. Square boards only; matches standard 9/13/19 layouts.
