@@ -27,9 +27,7 @@ type model struct {
 	ogs         ogsModel
 	authPending bool // stored login present, validating at launch
 
-	events       chan gameEvent // socket snapshots, drained by waitForGameEvent
-	socket       *gameSocket    // focused game's connection; nil when on home
-	socketGameID int64          // game id the socket is (or is being) opened for
+	events chan gameEvent // backend snapshots, drained by waitForGameEvent
 }
 
 func newModel() model {
@@ -55,21 +53,27 @@ func newModel() model {
 // @region tabs:manage
 
 // Switches to the game's tab, opening (and persisting) a new one if needed.
-func (m *model) openGame(g game) {
+// Returns a cmd that connects the new tab's backend (nil when already open).
+func (m *model) openGame(g game) tea.Cmd {
 	for i, t := range m.tabs {
 		if t.Source == "ogs" && t.GameID == g.id {
 			m.active = i + 1
-			return
+			return nil
 		}
 	}
 	m.tabs = append(m.tabs, tabRef{Source: "ogs", GameID: g.id})
-	m.games = append(m.games, newGameModel(len(m.games), g))
+	b := &ogsBackend{gameID: g.id, whiteID: g.white.id, ogs: m.ogs}
+	gm := newGameModel(len(m.games), g, b)
+	spin := gm.beginConnect()
+	m.games = append(m.games, gm)
 	_ = saveTabs(m.tabs)
 	m.active = len(m.games)
+	return tea.Batch(connectBackendCmd(b, g.id, m.events), spin)
 }
 
 // Closes the game tab at games-index i (active-1), reindexing the rest.
 func (m *model) closeTab(i int) {
+	m.games[i].backend.Disconnect()
 	m.games = append(m.games[:i], m.games[i+1:]...)
 	m.tabs = append(m.tabs[:i], m.tabs[i+1:]...)
 	for j := range m.games {
@@ -94,53 +98,33 @@ func (m *model) gameByID(id int64) *gameModel {
 	return nil
 }
 
-// Reconciles the single socket connection with the focused tab: disconnects the
-// old game, connects the newly focused one. Returns a cmd that dials the new
-// socket (nil when the focused tab is home or already connected).
-func (m *model) syncFocus() tea.Cmd {
-	var want int64
-	if m.active > 0 {
-		want = m.games[m.active-1].game.id
-	}
-	if want == m.socketGameID {
-		return nil
-	}
-	// Tear down the previous connection and clear its loading state.
-	m.socket.Disconnect()
-	m.socket = nil
-	if prev := m.gameByID(m.socketGameID); prev != nil {
-		prev.connecting = false
-	}
-	m.socketGameID = want
-	if want == 0 {
-		return nil
-	}
-	spin := m.games[m.active-1].beginConnect()
-	whiteID := m.games[m.active-1].game.white.id
-	return tea.Batch(connectGameCmd(want, whiteID, m.ogs, m.events), spin)
-}
-
-// Rebuilds game models for restored tabs once the game list is known. Drops
-// tabs whose game is no longer active. No-op once tabs are already open.
-func (m *model) restoreTabs(games []game) {
+// Rebuilds game models for restored tabs once the game list is known, connecting
+// each tab's backend (per-tab lifetime). Drops tabs whose game is no longer
+// active. No-op once tabs are already open. Returns a cmd that dials the backends.
+func (m *model) restoreTabs(games []game) tea.Cmd {
 	if len(m.games) > 0 {
-		return
+		return nil
 	}
 	byID := make(map[int64]game, len(games))
 	for _, g := range games {
 		byID[g.id] = g
 	}
 	var kept []tabRef
+	var cmds []tea.Cmd
 	for _, t := range m.tabs {
 		g, ok := byID[t.GameID]
 		if !ok {
 			continue
 		}
 		kept = append(kept, t)
-		m.games = append(m.games, newGameModel(len(m.games), g))
+		b := &ogsBackend{gameID: g.id, whiteID: g.white.id, ogs: m.ogs}
+		gm := newGameModel(len(m.games), g, b)
+		cmds = append(cmds, gm.beginConnect(), connectBackendCmd(b, g.id, m.events))
+		m.games = append(m.games, gm)
 	}
 	m.tabs = kept
 	_ = saveTabs(m.tabs)
+	return tea.Batch(cmds...)
 }
 
 // Home tab plus one per game.
@@ -216,31 +200,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case gamesLoadedMsg:
 		m.home.setGames(msg.games)
-		m.restoreTabs(msg.games)
-		return m, nil
+		return m, m.restoreTabs(msg.games)
 	case openGameMsg:
-		m.openGame(msg.game)
-		return m, m.syncFocus()
+		return m, m.openGame(msg.game)
 	case gameEvent:
 		if gm := m.gameByID(msg.gameID); gm != nil {
 			gm.applySnapshot(msg.state)
 		}
 		return m, waitForGameEvent(m.events) // keep listening
-	case socketConnectedMsg:
-		// Focus moved on while dialing: drop the now-stale connection.
-		if msg.gameID != m.socketGameID {
-			msg.socket.Disconnect()
-			return m, nil
-		}
+	case backendConnectedMsg:
 		if msg.err != nil {
 			if gm := m.gameByID(msg.gameID); gm != nil {
 				gm.connecting = false
 				gm.connectErr = true
 			}
-			m.socketGameID = 0
-			return m, nil
 		}
-		m.socket = msg.socket
 		return m, nil
 	case navErrorExpiredMsg:
 		if msg.game >= 0 && msg.game < len(m.games) {
@@ -296,7 +270,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// X closes the focused game tab (home tab can't close).
 		if msg.String() == "X" && m.active > 0 {
 			m.closeTab(m.active - 1)
-			return m, m.syncFocus()
+			return m, nil
 		}
 		// r refetches the game list when authenticated.
 		if msg.String() == "r" && m.ogs.authenticated() {
@@ -304,14 +278,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		switch msg.String() {
 		case "q", "ctrl+c", "esc":
-			m.socket.Disconnect() // release the focused game's socket on quit
+			for i := range m.games {
+				m.games[i].backend.Disconnect() // release every open game's backend on quit
+			}
 			return m, tea.Quit
 		case "tab", "]":
 			m.active = (m.active + 1) % m.tabCount()
-			return m, m.syncFocus()
+			return m, nil
 		case "shift+tab", "[":
 			m.active = (m.active - 1 + m.tabCount()) % m.tabCount()
-			return m, m.syncFocus()
+			return m, nil
 		}
 		// Delegate remaining keys to the active tab.
 		var cmd tea.Cmd

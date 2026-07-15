@@ -15,8 +15,9 @@ const navErrorTTL = 800 * time.Millisecond
 
 // A single active game: board column + meta column.
 type gameModel struct {
-	idx        int  // index into the parent's games slice, for routed messages
-	game       game // core game state this tab tracks
+	idx        int     // index into the parent's games slice, for routed messages
+	game       game    // core game state this tab tracks
+	backend    backend // where this game's authority lives (ogs/local/gnugo)
 	board      boardModel
 	info       infoModel
 	chat       chatModel
@@ -28,7 +29,7 @@ type gameModel struct {
 	connectErr bool // the socket failed to connect
 }
 
-func newGameModel(idx int, g game) gameModel {
+func newGameModel(idx int, g game, b backend) gameModel {
 	ti := textinput.New()
 	ti.Prompt = "Go to > "
 	ti.Placeholder = "A1"
@@ -40,6 +41,7 @@ func newGameModel(idx int, g game) gameModel {
 	return gameModel{
 		idx:     idx,
 		game:    g,
+		backend: b,
 		board:   newBoardModel(g.width, g.height),
 		info:    newInfoModel(),
 		chat:    newChatModel(),

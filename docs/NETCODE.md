@@ -1,10 +1,8 @@
 # Netcode
 
-How gogo streams live board state from OGS into the Bubble Tea UI.
+How gogo streams live board state from OGS into bubbletea.
 
 ## Where the board comes from
-
-Two OGS surfaces are involved, and the split is the key thing to understand:
 
 - **The realtime socket** (`game/<id>/gamedata`) is only a **"state changed"
   trigger.** Despite the name, `gamedata` does *not* contain a rendered board —
