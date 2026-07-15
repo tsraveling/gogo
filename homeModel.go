@@ -2,9 +2,8 @@ package main
 
 import (
 	"fmt"
-	"io"
+	"strings"
 
-	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -13,72 +12,95 @@ import (
 const signInOption = "Sign in to OGS"
 const gnuGoOption = "Play vs. GnuGo"
 
-// Single menu entry.
-type homeItem string
+type homeEntryKind int
 
-func (i homeItem) FilterValue() string { return string(i) }
+const (
+	entryGame homeEntryKind = iota
+	entryAction
+	entrySpacer // non-selectable gap
+)
 
-// Renders each entry on one line with a selection cursor.
-type homeDelegate struct{}
-
-func (homeDelegate) Height() int                         { return 1 }
-func (homeDelegate) Spacing() int                        { return 0 }
-func (homeDelegate) Update(tea.Msg, *list.Model) tea.Cmd { return nil }
-
-func (homeDelegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
-	label := string(item.(homeItem))
-	if index == m.Index() {
-		fmt.Fprint(w, selectedItemStyle.Render("> "+label))
-		return
-	}
-	fmt.Fprint(w, itemStyle.Render("  "+label))
+// One home-list row: an active game, an action, or a spacer.
+type homeEntry struct {
+	kind   homeEntryKind
+	action string // entryAction label
+	game   game   // entryGame data
 }
 
+func (e homeEntry) selectable() bool { return e.kind != entrySpacer }
+
 // First tab: a centered, navigable menu. No background.
-// Will eventually list active games above the static options.
+// Lists active games first, then actions.
 type homeModel struct {
-	list        list.Model
+	entries     []homeEntry
+	cursor      int // index into entries, always on a selectable row
+	games       []game
 	authed      bool
 	authPending bool // validating a stored login; sign-in stays hidden
 }
 
-// Menu labels for the current auth state; sign-in dropped while authed or validating.
-func homeMenuOptions(authed, pending bool) []string {
-	if authed || pending {
-		return []string{gnuGoOption}
-	}
-	return []string{signInOption, gnuGoOption}
-}
-
 func newHomeModel() homeModel {
-	l := list.New(nil, homeDelegate{}, 0, 0)
-	l.SetShowTitle(false)
-	l.SetShowStatusBar(false)
-	l.SetShowHelp(false)
-	l.SetShowPagination(false)
-	l.SetFilteringEnabled(false)
-
-	h := homeModel{list: l}
+	h := homeModel{}
 	h.rebuild()
 	return h
 }
 
-// Repopulates the list for the current auth state and sizes it.
+// Rebuilds rows for the current games/auth state and keeps the cursor valid.
 func (h *homeModel) rebuild() {
-	opts := homeMenuOptions(h.authed, h.authPending)
-	items := make([]list.Item, len(opts))
-	maxW := 0
-	for i, o := range opts {
-		items[i] = homeItem(o)
-		if w := lipgloss.Width(o) + 2; w > maxW {
-			maxW = w
-		}
+	var e []homeEntry
+	for _, g := range h.games {
+		e = append(e, homeEntry{kind: entryGame, game: g})
 	}
-	h.list.SetItems(items)
-	h.list.SetSize(maxW, len(items))
+	if len(h.games) > 0 {
+		e = append(e, homeEntry{kind: entrySpacer})
+	}
+	if !h.authed && !h.authPending {
+		e = append(e, homeEntry{kind: entryAction, action: signInOption})
+	}
+	e = append(e, homeEntry{kind: entryAction, action: gnuGoOption})
+	h.entries = e
+	h.clampCursor()
 }
 
-// Updates auth state and refreshes the menu.
+// Snaps the cursor onto the nearest selectable row.
+func (h *homeModel) clampCursor() {
+	if h.cursor < 0 {
+		h.cursor = 0
+	}
+	if h.cursor >= len(h.entries) {
+		h.cursor = len(h.entries) - 1
+	}
+	for i := h.cursor; i < len(h.entries); i++ {
+		if h.entries[i].selectable() {
+			h.cursor = i
+			return
+		}
+	}
+	for i := h.cursor; i >= 0; i-- {
+		if h.entries[i].selectable() {
+			h.cursor = i
+			return
+		}
+	}
+}
+
+// Steps the cursor by dir, skipping spacers; stays put at the ends.
+func (h *homeModel) moveCursor(dir int) {
+	for i := h.cursor + dir; i >= 0 && i < len(h.entries); i += dir {
+		if h.entries[i].selectable() {
+			h.cursor = i
+			return
+		}
+	}
+}
+
+// setGames replaces the active-games list and rebuilds.
+func (h *homeModel) setGames(games []game) {
+	h.games = games
+	h.rebuild()
+}
+
+// setAuthed updates auth state and refreshes the menu.
 func (h *homeModel) setAuthed(authed bool) {
 	if h.authed == authed {
 		return
@@ -87,7 +109,7 @@ func (h *homeModel) setAuthed(authed bool) {
 	h.rebuild()
 }
 
-// Toggles the validating-a-stored-login state.
+// setAuthPending toggles the validating-a-stored-login state.
 func (h *homeModel) setAuthPending(pending bool) {
 	if h.authPending == pending {
 		return
@@ -97,16 +119,105 @@ func (h *homeModel) setAuthPending(pending bool) {
 }
 
 func (h homeModel) Update(msg tea.Msg) (homeModel, tea.Cmd) {
-	if key, ok := msg.(tea.KeyMsg); ok && key.String() == "enter" {
-		if item, ok := h.list.SelectedItem().(homeItem); ok && string(item) == signInOption {
-			return h, func() tea.Msg { return openAuthMsg{} }
+	key, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return h, nil
+	}
+	switch key.String() {
+	case "up", "k":
+		h.moveCursor(-1)
+	case "down", "j":
+		h.moveCursor(1)
+	case "enter":
+		if h.cursor < len(h.entries) {
+			e := h.entries[h.cursor]
+			if e.kind == entryAction && e.action == signInOption {
+				return h, func() tea.Msg { return openAuthMsg{} }
+			}
 		}
 	}
-	var cmd tea.Cmd
-	h.list, cmd = h.list.Update(msg)
-	return h, cmd
+	return h, nil
 }
 
 func (h homeModel) View(w, hgt int) string {
-	return lipgloss.Place(w, hgt, lipgloss.Center, lipgloss.Center, h.list.View())
+	var rows []string
+	for i, e := range h.entries {
+		selected := i == h.cursor
+		switch e.kind {
+		case entryGame:
+			if i > 0 && h.entries[i-1].kind == entryGame {
+				rows = append(rows, "") // blank line between games
+			}
+			rows = append(rows, renderGameEntry(e.game, selected))
+		case entryAction:
+			rows = append(rows, renderActionEntry(e.action, selected))
+		case entrySpacer:
+			rows = append(rows, "")
+		}
+	}
+	menu := lipgloss.JoinVertical(lipgloss.Left, rows...)
+	return lipgloss.Place(w, hgt, lipgloss.Center, lipgloss.Center, menu)
+}
+
+// A two-line game row: name + size, then both players with color markers.
+func renderGameEntry(g game, selected bool) string {
+	// White+bold on your turn, gray otherwise; selection overrides the color.
+	nameStyle := gameNameIdleStyle
+	if g.yourTurn() {
+		nameStyle = gameNameStyle
+	}
+	if selected {
+		nameStyle = gameNameSelectedStyle
+	}
+	line1 := nameStyle.Bold(g.yourTurn()).Render(g.name) + " " +
+		gameMetaStyle.Render(fmt.Sprintf("(%dx%d)", g.width, g.height))
+	line2 := playerName(g, black) + " " +
+		rankParen("●", g.black.rankString()) + " " +
+		gameMetaStyle.Render("vs") + " " +
+		playerName(g, white) + " " +
+		rankParen("○", g.white.rankString())
+	return gutter(lipgloss.JoinVertical(lipgloss.Left, line1, line2), selected)
+}
+
+// A rank paren with the stone glyph highlighted white: e.g. "(○ 25 kyu)".
+func rankParen(stone, rank string) string {
+	return gameMetaStyle.Render("(") + stoneStyle.Render(stone) +
+		gameMetaStyle.Render(" "+rank+")")
+}
+
+// Player name styled bold white when it's that side's move, gray otherwise.
+func playerName(g game, side stoneColor) string {
+	name := g.black.name
+	if side == white {
+		name = g.white.name
+	}
+	if g.state.playerToMove == side {
+		return currentPlayerStyle.Render(name)
+	}
+	return inactivePlayerStyle.Render(name)
+}
+
+// A single-line action row.
+func renderActionEntry(label string, selected bool) string {
+	if selected {
+		return selectedItemStyle.Render("> " + label)
+	}
+	return itemStyle.Render("  " + label)
+}
+
+// Prefixes a block with a selection marker on the first line, aligning the rest.
+func gutter(block string, selected bool) string {
+	marker := "  "
+	if selected {
+		marker = selectedItemStyle.Render("> ")
+	}
+	lines := strings.Split(block, "\n")
+	for i := range lines {
+		if i == 0 {
+			lines[i] = marker + lines[i]
+		} else {
+			lines[i] = "  " + lines[i]
+		}
+	}
+	return strings.Join(lines, "\n")
 }

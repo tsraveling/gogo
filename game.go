@@ -19,7 +19,8 @@ const (
 	rulesetNewZealand ruleset = "nz"
 )
 
-// Square board side length. OGS presets: 9, 13, 19.
+// Preset square side length for local games. OGS games carry arbitrary
+// width/height (rectangular, 1–25) on game directly.
 type boardSize int
 
 const (
@@ -27,6 +28,9 @@ const (
 	size13 boardSize = 13
 	size19 boardSize = 19
 )
+
+// Width and height for a square preset.
+func (s boardSize) dims() (int, int) { return int(s), int(s) }
 
 // Cell/stone value, matching OGS board encoding (0/1/2).
 type stoneColor int
@@ -89,11 +93,20 @@ func (b boardState) width() int {
 func (b boardState) finished() bool { return b.phase == phaseFinished }
 
 // The core game: metadata, both players, and current board state.
+// width/height hold any OGS-supported dimensions; local games set them
+// from a boardSize preset via dims().
 type game struct {
 	name    string
 	ruleset ruleset
-	size    boardSize
+	width   int
+	height  int
+	you     stoneColor // side the local user plays; empty for none (e.g. hotseat)
 	black   player
 	white   player
 	state   boardState
+}
+
+// Reports whether it is the local user's move.
+func (g game) yourTurn() bool {
+	return g.you != empty && g.you == g.state.playerToMove
 }

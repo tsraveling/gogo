@@ -16,11 +16,11 @@ var homeIcon = func() string {
 }()
 
 type model struct {
-	width    int
-	height   int
-	home     homeModel
-	games    []gameModel
-	active   int // 0 = home tab; 1..n = games[active-1]
+	width       int
+	height      int
+	home        homeModel
+	games       []gameModel
+	active      int // 0 = home tab; 1..n = games[active-1]
 	auth        ogsAuthModel
 	showAuth    bool // modal open, captures all input
 	ogs         ogsModel
@@ -56,6 +56,22 @@ type authLoadedMsg struct {
 	ok  bool
 }
 
+// Delivers the user's active games after an auth succeeds.
+type gamesLoadedMsg struct {
+	games []game
+}
+
+// Fetches active games off the UI goroutine; empty list on error (MVP).
+func fetchGamesCmd(o ogsModel) tea.Cmd {
+	return func() tea.Msg {
+		games, err := fetchActiveGames(o.AccessToken, o.UserID)
+		if err != nil {
+			return gamesLoadedMsg{}
+		}
+		return gamesLoadedMsg{games: games}
+	}
+}
+
 func (m model) Init() tea.Cmd {
 	return validateStoredAuth
 }
@@ -88,7 +104,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.ok {
 			m.ogs = msg.ogs
 			m.home.setAuthed(true)
+			return m, fetchGamesCmd(m.ogs)
 		}
+		return m, nil
+	case gamesLoadedMsg:
+		m.home.setGames(msg.games)
 		return m, nil
 	case openAuthMsg:
 		m.auth.reset()
@@ -104,13 +124,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case authResultMsg:
 		// Persist a successful login before the auth modal shows its banner.
+		var cmd tea.Cmd
+		m.auth, cmd = m.auth.Update(msg)
 		if msg.err == nil {
 			m.ogs = msg.ogs
 			_ = m.ogs.save()
 			m.home.setAuthed(true)
+			return m, tea.Batch(cmd, fetchGamesCmd(m.ogs))
 		}
-		var cmd tea.Cmd
-		m.auth, cmd = m.auth.Update(msg)
 		return m, cmd
 	case tea.KeyMsg:
 		// Modal captures all input; tabs and quit keys are disabled.
@@ -123,8 +144,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.String() == "X" && m.ogs.authenticated() {
 			_ = m.ogs.clear()
 			m.ogs = ogsModel{}
+			m.home.setGames(nil)
 			m.home.setAuthed(false)
 			return m, nil
+		}
+		// r refetches the game list when authenticated.
+		if msg.String() == "r" && m.ogs.authenticated() {
+			return m, fetchGamesCmd(m.ogs)
 		}
 		switch msg.String() {
 		case "q", "ctrl+c", "esc":
@@ -186,8 +212,10 @@ func (m model) View() string {
 	case m.authPending:
 		status = dimStyle.Width(m.width).Align(lipgloss.Center).Render("Logging in …")
 	case m.ogs.authenticated():
-		status = dimStyle.Width(m.width).Align(lipgloss.Center).
+		refresh := dimStyle.Width(m.width).Align(lipgloss.Center).Render("r to refresh")
+		login := dimStyle.Width(m.width).Align(lipgloss.Center).
 			Render("Logged in as " + m.ogs.Username + ". X to logout.")
+		status = lipgloss.JoinVertical(lipgloss.Left, refresh, login)
 	}
 	if status != "" {
 		bodyH -= lipgloss.Height(status)

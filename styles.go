@@ -5,6 +5,8 @@ import "github.com/charmbracelet/lipgloss"
 var (
 	primaryColor = lipgloss.Color("206")
 	dimColor     = lipgloss.Color("243")
+	// Unemphasized: brighter than dim, not full white. Game titles for now.
+	unemphColor = lipgloss.Color("250")
 
 	titleStyle = lipgloss.NewStyle().Bold(true).Foreground(primaryColor)
 
@@ -20,6 +22,17 @@ var (
 	// Home menu entries.
 	itemStyle         = lipgloss.NewStyle().Foreground(dimColor)
 	selectedItemStyle = lipgloss.NewStyle().Bold(true).Foreground(primaryColor)
+
+	// Home list game entries. Name uses active color for selection, bold for
+	// your turn; players use bold white for the side to move, gray otherwise.
+	gameNameStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("231"))
+	gameNameIdleStyle     = lipgloss.NewStyle().Foreground(unemphColor)
+	gameNameSelectedStyle = lipgloss.NewStyle().Foreground(primaryColor)
+	gameMetaStyle         = lipgloss.NewStyle().Foreground(dimColor)
+	currentPlayerStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("231"))
+	inactivePlayerStyle   = lipgloss.NewStyle().Foreground(dimColor)
+	// White stone glyph inside the rank paren, so the color marker stands out.
+	stoneStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("231"))
 
 	dimStyle     = lipgloss.NewStyle().Foreground(dimColor)
 	errorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))

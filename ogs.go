@@ -180,24 +180,30 @@ func oauthErr(r oauthResponse) string {
 // Reads /api/v1/me with the given access token.
 func fetchPlayer(accessToken string) (ogsPlayer, error) {
 	var p ogsPlayer
-	req, err := http.NewRequest(http.MethodGet, meURL, nil)
+	err := authGet(meURL, accessToken, &p)
+	return p, err
+}
+
+// Performs a Bearer-authenticated GET and unmarshals the JSON response.
+func authGet(rawURL, accessToken string, out any) error {
+	req, err := http.NewRequest(http.MethodGet, rawURL, nil)
 	if err != nil {
-		return p, err
+		return err
 	}
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return p, err
+		return err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return p, errors.New("failed to load profile: " + resp.Status)
+		return errors.New("ogs request failed: " + resp.Status)
 	}
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return p, err
+		return err
 	}
-	return p, json.Unmarshal(body, &p)
+	return json.Unmarshal(body, out)
 }
 
 // Submits url-encoded values and unmarshals the JSON response.
