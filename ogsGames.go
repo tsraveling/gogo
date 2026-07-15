@@ -51,6 +51,7 @@ func (a ogsActiveGame) toGame(myID int64) game {
 		you = white
 	}
 	return game{
+		id:      a.ID,
 		name:    a.Name,
 		ruleset: ruleset(a.JSON.Rules),
 		width:   a.Width,

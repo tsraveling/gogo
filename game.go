@@ -96,14 +96,17 @@ func (b boardState) finished() bool { return b.phase == phaseFinished }
 // width/height hold any OGS-supported dimensions; local games set them
 // from a boardSize preset via dims().
 type game struct {
-	name    string
-	ruleset ruleset
-	width   int
-	height  int
-	you     stoneColor // side the local user plays; empty for none (e.g. hotseat)
-	black   player
-	white   player
-	state   boardState
+	id       int64 // OGS game id; 0 for local games
+	name     string
+	ruleset  ruleset
+	width    int
+	height   int
+	komi     float64
+	handicap int
+	you      stoneColor // side the local user plays; empty for none (e.g. hotseat)
+	black    player
+	white    player
+	state    boardState
 }
 
 // Reports whether it is the local user's move.

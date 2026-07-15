@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -13,8 +14,8 @@ const navErrorTTL = 800 * time.Millisecond
 
 // A single active game: board column + meta column.
 type gameModel struct {
-	idx     int // index into the parent's games slice, for routed messages
-	name    string
+	idx     int  // index into the parent's games slice, for routed messages
+	game    game // core game state this tab tracks
 	board   boardModel
 	info    infoModel
 	chat    chatModel
@@ -23,7 +24,7 @@ type gameModel struct {
 	navGoto textinput.Model
 }
 
-func newGameModel(idx int, name string, w, h int) gameModel {
+func newGameModel(idx int, g game) gameModel {
 	ti := textinput.New()
 	ti.Prompt = "Go to > "
 	ti.Placeholder = "A1"
@@ -31,8 +32,8 @@ func newGameModel(idx int, name string, w, h int) gameModel {
 	ti.Width = 4
 	return gameModel{
 		idx:     idx,
-		name:    name,
-		board:   newBoardModel(w, h),
+		game:    g,
+		board:   newBoardModel(g.width, g.height),
 		info:    newInfoModel(),
 		chat:    newChatModel(),
 		navGoto: ti,
@@ -123,17 +124,23 @@ func (g gameModel) View(termW, termH int) string {
 	boardCol := lipgloss.JoinVertical(lipgloss.Left, g.board.View(), g.controlView(boardW))
 	colHeight := lipgloss.Height(boardCol)
 
-	// Meta column fills remaining width; info 6 rows, chat gets the rest.
-	metaW := max(termW-boardW, 0)
+	// Layout: 2-col left margin, board, 3-col gap, then the meta column.
+	const leftMargin = 2
+	const colGap = 3
+	metaW := max(termW-leftMargin-boardW-colGap, 0)
 	infoH := 6
 	chatH := max(colHeight-infoH, 0)
 	metaCol := lipgloss.JoinVertical(
 		lipgloss.Left,
-		g.info.View(metaW, infoH),
+		g.info.View(g.game, metaW, infoH),
 		g.chat.View(metaW, chatH),
 	)
 
-	return lipgloss.JoinHorizontal(lipgloss.Top, boardCol, metaCol)
+	return lipgloss.JoinHorizontal(
+		lipgloss.Top,
+		strings.Repeat(" ", leftMargin), boardCol,
+		strings.Repeat(" ", colGap), metaCol,
+	)
 }
 
 // Two-row board control: the "Go to" prompt (with error flash) or a key hint.

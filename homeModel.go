@@ -165,8 +165,12 @@ func (h homeModel) Update(msg tea.Msg) (homeModel, tea.Cmd) {
 	case "enter":
 		if h.cursor < len(h.entries) {
 			e := h.entries[h.cursor]
-			if e.kind == entryAction && e.action == signInOption {
+			switch {
+			case e.kind == entryAction && e.action == signInOption:
 				return h, func() tea.Msg { return openAuthMsg{} }
+			case e.kind == entryGame:
+				g := e.game
+				return h, func() tea.Msg { return openGameMsg{game: g} }
 			}
 		}
 	}
@@ -216,7 +220,7 @@ func (h homeModel) statusBar(w int) string {
 	case h.authed:
 		refresh := dimStyle.Width(w).Align(lipgloss.Center).Render("r to refresh")
 		login := dimStyle.Width(w).Align(lipgloss.Center).
-			Render("Logged in as " + h.username + ". X to logout.")
+			Render("Logged in as " + h.username + ". Q to logout.")
 		return lipgloss.JoinVertical(lipgloss.Left, refresh, login)
 	}
 	return ""

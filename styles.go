@@ -39,6 +39,11 @@ var (
 	// White stone glyph inside the rank paren, so the color marker stands out.
 	stoneStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("231"))
 
+	// Game info player bars: black bg/white text, and its inverse.
+	infoBlackStyle = lipgloss.NewStyle().Background(lipgloss.Color("0")).Foreground(lipgloss.Color("231"))
+	infoWhiteStyle = lipgloss.NewStyle().Background(lipgloss.Color("231")).Foreground(lipgloss.Color("0"))
+	turnDotStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
+
 	dimStyle     = lipgloss.NewStyle().Foreground(dimColor)
 	errorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
 	successStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("46"))
