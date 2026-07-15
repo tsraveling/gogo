@@ -10,6 +10,10 @@ var (
 
 	titleStyle = lipgloss.NewStyle().Bold(true).Foreground(primaryColor)
 
+	// Board grid points (empty + star) and coordinate labels.
+	boardPointStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
+	boardLabelStyle = lipgloss.NewStyle().Foreground(dimColor)
+
 	// Stub panel backgrounds — placeholder until real content lands.
 	boardBg   = lipgloss.Color("236")
 	controlBg = lipgloss.Color("238")

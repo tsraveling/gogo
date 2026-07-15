@@ -108,7 +108,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.home.setAuthPending(false)
 		if msg.ok {
 			m.ogs = msg.ogs
-			m.home.setAuthed(true)
+			m.home.setAuthed(true, m.ogs.Username)
 			return m, tea.Batch(fetchGamesCmd(m.ogs), m.home.startLoading())
 		}
 		return m, nil
@@ -134,7 +134,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err == nil {
 			m.ogs = msg.ogs
 			_ = m.ogs.save()
-			m.home.setAuthed(true)
+			m.home.setAuthed(true, m.ogs.Username)
 			return m, tea.Batch(cmd, fetchGamesCmd(m.ogs), m.home.startLoading())
 		}
 		return m, cmd
@@ -150,7 +150,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			_ = m.ogs.clear()
 			m.ogs = ogsModel{}
 			m.home.setGames(nil)
-			m.home.setAuthed(false)
+			m.home.setAuthed(false, "")
 			return m, nil
 		}
 		// r refetches the game list when authenticated.
@@ -216,30 +216,12 @@ func (m model) View() string {
 	tabs := m.renderTabs()
 	bodyH := m.height - lipgloss.Height(tabs)
 
-	// Reserve a bottom row for login status: validating, or logged in.
-	var status string
-	switch {
-	case m.authPending:
-		status = dimStyle.Width(m.width).Align(lipgloss.Center).Render("Logging in …")
-	case m.ogs.authenticated():
-		refresh := dimStyle.Width(m.width).Align(lipgloss.Center).Render("r to refresh")
-		login := dimStyle.Width(m.width).Align(lipgloss.Center).
-			Render("Logged in as " + m.ogs.Username + ". X to logout.")
-		status = lipgloss.JoinVertical(lipgloss.Left, refresh, login)
-	}
-	if status != "" {
-		bodyH -= lipgloss.Height(status)
-	}
-
+	// Login status bar now lives in the home tab (home.View), not here.
 	var body string
 	if m.active == 0 {
 		body = m.home.View(m.width, bodyH)
 	} else {
 		body = m.games[m.active-1].View(m.width, bodyH)
-	}
-
-	if status != "" {
-		return lipgloss.JoinVertical(lipgloss.Left, tabs, body, status)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, tabs, body)
 }

@@ -42,7 +42,8 @@ type homeModel struct {
 	spinner     spinner.Model
 	loading     bool // fetching the game list
 	authed      bool
-	authPending bool // validating a stored login; sign-in stays hidden
+	authPending bool   // validating a stored login; sign-in stays hidden
+	username    string // OGS login shown in the status bar
 }
 
 func newHomeModel() homeModel {
@@ -124,8 +125,9 @@ func (h *homeModel) startLoading() tea.Cmd {
 	return h.spinner.Tick
 }
 
-// setAuthed updates auth state and refreshes the menu.
-func (h *homeModel) setAuthed(authed bool) {
+// setAuthed updates auth state (and the status-bar login) and refreshes the menu.
+func (h *homeModel) setAuthed(authed bool, username string) {
+	h.username = username
 	if h.authed == authed {
 		return
 	}
@@ -192,7 +194,32 @@ func (h homeModel) View(w, hgt int) string {
 	// Fixed 8-col left margin, vertically centered — avoids horizontal jitter
 	// as row widths change (loading → games).
 	menu := lipgloss.NewStyle().MarginLeft(8).Render(lipgloss.JoinVertical(lipgloss.Left, rows...))
-	return lipgloss.Place(w, hgt, lipgloss.Left, lipgloss.Center, menu)
+
+	// Bottom status bar: login state. Home-only, so game tabs keep full height.
+	status := h.statusBar(w)
+	bodyH := hgt
+	if status != "" {
+		bodyH -= lipgloss.Height(status)
+	}
+	body := lipgloss.Place(w, bodyH, lipgloss.Left, lipgloss.Center, menu)
+	if status != "" {
+		return lipgloss.JoinVertical(lipgloss.Left, body, status)
+	}
+	return body
+}
+
+// Login status bar: validating, or logged-in with refresh/logout hints.
+func (h homeModel) statusBar(w int) string {
+	switch {
+	case h.authPending:
+		return dimStyle.Width(w).Align(lipgloss.Center).Render("Logging in …")
+	case h.authed:
+		refresh := dimStyle.Width(w).Align(lipgloss.Center).Render("r to refresh")
+		login := dimStyle.Width(w).Align(lipgloss.Center).
+			Render("Logged in as " + h.username + ". X to logout.")
+		return lipgloss.JoinVertical(lipgloss.Left, refresh, login)
+	}
+	return ""
 }
 
 // A two-line game row: name + size, then both players with color markers.
