@@ -13,13 +13,57 @@ const coordLetters = "ABCDEFGHJKLMNOPQRSTUVWXYZ"
 
 // Renders a single game's board state.
 type boardModel struct {
-	width  int // board size in points (e.g. 9 for 9x9)
-	height int
+	width        int // board size in points (e.g. 9 for 9x9)
+	height       int
+	interactable bool // show and move a cursor
+	cursorX      int
+	cursorY      int
 }
 
 func newBoardModel(w, h int) boardModel {
-	return boardModel{width: w, height: h}
+	return boardModel{width: w, height: h, interactable: true, cursorX: w / 2, cursorY: h / 2}
 }
+
+// @region board:navigation
+
+// Clamps to the board and places the cursor. Also the parent-facing setter.
+func (b *boardModel) SetCursor(x, y int) {
+	b.cursorX = clamp(x, 0, b.width-1)
+	b.cursorY = clamp(y, 0, b.height-1)
+}
+
+// Steps the cursor, clamped to the board edges.
+func (b *boardModel) MoveCursor(dx, dy int) { b.SetCursor(b.cursorX+dx, b.cursorY+dy) }
+
+// Parses a coordinate like "A1" (letter + row, 1 = bottom). ok is false if
+// out of range or malformed.
+func (b boardModel) parsePosition(s string) (x, y int, ok bool) {
+	s = strings.TrimSpace(strings.ToUpper(s))
+	if len(s) < 2 {
+		return 0, 0, false
+	}
+	col := strings.IndexByte(coordLetters, s[0])
+	if col < 0 || col >= b.width {
+		return 0, 0, false
+	}
+	n, err := strconv.Atoi(s[1:])
+	if err != nil || n < 1 || n > b.height {
+		return 0, 0, false
+	}
+	return col, b.height - n, true // 1 is the bottom row
+}
+
+func clamp(v, lo, hi int) int {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
+
+// @region board:view-model
 
 // Digits needed for the row numbers (1..height).
 func (b boardModel) numW() int { return len(strconv.Itoa(b.height)) }
@@ -46,9 +90,7 @@ func (b boardModel) View() string {
 		right := boardLabelStyle.Render(fmt.Sprintf("%-*d", numW, num))
 		sb.WriteByte('\n')
 		sb.WriteString(left)
-		sb.WriteByte(' ')
-		sb.WriteString(b.pointRow(y))
-		sb.WriteByte(' ')
+		sb.WriteString(b.boardRow(y))
 		sb.WriteString(right)
 	}
 	sb.WriteByte('\n')
@@ -66,16 +108,49 @@ func (b boardModel) letterRow(numW int) string {
 	return prefix + boardLabelStyle.Render(strings.Join(cells, " "))
 }
 
-// One row of intersections: "." empty, "+" star point.
-func (b boardModel) pointRow(y int) string {
-	cells := make([]string, b.width)
+// One board line, including the left/right margin chars. Points are spaced by
+// one char; the cursor's "[" and "]" occupy those gap/margin chars so column
+// alignment is unchanged.
+func (b boardModel) boardRow(y int) string {
+	cx := -1
+	if b.interactable && b.cursorY == y {
+		cx = b.cursorX
+	}
+
+	var sb strings.Builder
+	if cx == 0 {
+		sb.WriteString(boardCursorStyle.Render("["))
+	} else {
+		sb.WriteByte(' ')
+	}
 	for x := 0; x < b.width; x++ {
-		cells[x] = "."
-		if b.isStar(x, y) {
-			cells[x] = "+"
+		sb.WriteString(boardPointStyle.Render(b.pointChar(x, y)))
+		if x == b.width-1 {
+			break
+		}
+		switch {
+		case x == cx:
+			sb.WriteString(boardCursorStyle.Render("]"))
+		case x+1 == cx:
+			sb.WriteString(boardCursorStyle.Render("["))
+		default:
+			sb.WriteByte(' ')
 		}
 	}
-	return boardPointStyle.Render(strings.Join(cells, " "))
+	if cx == b.width-1 {
+		sb.WriteString(boardCursorStyle.Render("]"))
+	} else {
+		sb.WriteByte(' ')
+	}
+	return sb.String()
+}
+
+// "+" star point, else "." empty.
+func (b boardModel) pointChar(x, y int) string {
+	if b.isStar(x, y) {
+		return "+"
+	}
+	return "."
 }
 
 // Star point (hoshi) test. Square boards only; matches standard 9/13/19 layouts.

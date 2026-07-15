@@ -31,9 +31,9 @@ func newModel() model {
 	m := model{
 		home: newHomeModel(),
 		games: []gameModel{
-			newGameModel("9x9", 9, 9),
-			newGameModel("13x13", 13, 13),
-			newGameModel("19x19", 19, 19),
+			newGameModel(0, "9x9", 9, 9),
+			newGameModel(1, "13x13", 13, 13),
+			newGameModel(2, "19x19", 19, 19),
 		},
 		auth: newOGSAuthModel(),
 	}
@@ -115,6 +115,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case gamesLoadedMsg:
 		m.home.setGames(msg.games)
 		return m, nil
+	case navErrorExpiredMsg:
+		if msg.game >= 0 && msg.game < len(m.games) {
+			var cmd tea.Cmd
+			m.games[msg.game], cmd = m.games[msg.game].Update(msg)
+			return m, cmd
+		}
+		return m, nil
 	case openAuthMsg:
 		m.auth.reset()
 		m.auth.prefillUsername(m.ogs.Username)
@@ -145,6 +152,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.auth, cmd = m.auth.Update(msg)
 			return m, cmd
 		}
+		// A game's "Go to" prompt captures all input the same way.
+		if m.active > 0 && m.games[m.active-1].capturingInput() {
+			var cmd tea.Cmd
+			m.games[m.active-1], cmd = m.games[m.active-1].Update(msg)
+			return m, cmd
+		}
 		// X logs out when authenticated.
 		if msg.String() == "X" && m.ogs.authenticated() {
 			_ = m.ogs.clear()
@@ -168,11 +181,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		// Delegate remaining keys to the active tab.
+		var cmd tea.Cmd
 		if m.active == 0 {
-			var cmd tea.Cmd
 			m.home, cmd = m.home.Update(msg)
-			return m, cmd
+		} else {
+			m.games[m.active-1], cmd = m.games[m.active-1].Update(msg)
 		}
+		return m, cmd
 	default:
 		// Non-key messages (e.g. spinner ticks) go to the home tab.
 		var cmd tea.Cmd
