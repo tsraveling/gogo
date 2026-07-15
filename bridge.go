@@ -32,13 +32,22 @@ func waitForGameEvent(ch <-chan gameEvent) tea.Cmd {
 	}
 }
 
-// Dials a game's socket off the UI goroutine; its gamedata callback pushes
-// snapshots onto ch. The socket returns via socketConnectedMsg.
-func connectGameCmd(gameID, playerID int64, ch chan<- gameEvent) tea.Cmd {
+// Dials a game's socket off the UI goroutine. The socket only signals "state
+// changed"; on each trigger we fetch the computed board and push a snapshot onto
+// ch. Fetches the realtime chat_auth token first so OGS streams our own games.
+// whiteID maps player_to_move to a side. The socket returns via socketConnectedMsg.
+func connectGameCmd(gameID, whiteID int64, o ogsModel, ch chan<- gameEvent) tea.Cmd {
 	return func() tea.Msg {
-		s, err := connectGame(gameID, playerID, func(st boardState) {
+		chatAuth, _ := fetchChatAuth(o.AccessToken) // best-effort; empty = unauthenticated read
+		auth := socketAuth{playerID: o.UserID, username: o.Username, chatAuth: chatAuth}
+		onChange := func() {
+			st, err := fetchBoardState(o.AccessToken, gameID, whiteID)
+			if err != nil {
+				return
+			}
 			ch <- gameEvent{gameID: gameID, state: st}
-		})
+		}
+		s, err := connectGame(gameID, auth, onChange)
 		return socketConnectedMsg{gameID: gameID, socket: s, err: err}
 	}
 }

@@ -52,6 +52,7 @@ const (
 
 // A game participant. rank is the raw OGS ranking; use rankString for display.
 type player struct {
+	id   int64
 	name string
 	rank float64
 }

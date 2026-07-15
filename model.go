@@ -116,7 +116,8 @@ func (m *model) syncFocus() tea.Cmd {
 		return nil
 	}
 	spin := m.games[m.active-1].beginConnect()
-	return tea.Batch(connectGameCmd(want, m.ogs.UserID, m.events), spin)
+	whiteID := m.games[m.active-1].game.white.id
+	return tea.Batch(connectGameCmd(want, whiteID, m.ogs, m.events), spin)
 }
 
 // Rebuilds game models for restored tabs once the game list is known. Drops

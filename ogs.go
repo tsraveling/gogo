@@ -20,6 +20,7 @@ const authFileName = "auth.json"
 const ogsBaseURL = "https://online-go.com"
 const oauthTokenURL = ogsBaseURL + "/oauth2/token/"
 const meURL = ogsBaseURL + "/api/v1/me"
+const uiConfigURL = ogsBaseURL + "/api/v1/ui/config"
 
 // Our registered OGS OAuth application id. It is a public
 // client (aka not a secret), so it ships in source.
@@ -182,6 +183,17 @@ func fetchPlayer(accessToken string) (ogsPlayer, error) {
 	var p ogsPlayer
 	err := authGet(meURL, accessToken, &p)
 	return p, err
+}
+
+// Fetches the realtime chat/auth token used to authenticate the game socket.
+func fetchChatAuth(accessToken string) (string, error) {
+	var cfg struct {
+		ChatAuth string `json:"chat_auth"`
+	}
+	if err := authGet(uiConfigURL, accessToken, &cfg); err != nil {
+		return "", err
+	}
+	return cfg.ChatAuth, nil
 }
 
 // Performs a Bearer-authenticated GET and unmarshals the JSON response.

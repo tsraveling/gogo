@@ -2,23 +2,47 @@
 
 How gogo streams live board state from OGS into the Bubble Tea UI.
 
-## The problem
+## Where the board comes from
 
-OGS realtime is a Socket.IO connection. The library (`graarh/golang-socketio`)
-is **callback-based**: you register `c.On("game/<id>/gamedata", fn)` and it
-invokes `fn` from its own goroutine whenever a snapshot arrives.
+Two OGS surfaces are involved, and the split is the key thing to understand:
 
-Bubble Tea is the opposite — a single-threaded Elm loop where all state changes
-happen inside `Update(msg)`. A socket callback can't touch the model directly.
-The bridge connects the two.
+- **The realtime socket** (`game/<id>/gamedata`) is only a **"state changed"
+  trigger.** Despite the name, `gamedata` does *not* contain a rendered board —
+  it carries `moves`, `initial_state`, and `initial_player`. Reconstructing the
+  board from those requires replaying moves *with capture logic*, which we don't
+  have yet.
+- **The computed board** comes from a plain REST call:
+  `GET /termination-api/game/<id>/state`, which returns a ready `board [][]int`
+  (0/1/2 = empty/black/white, `[y][x]`) plus `move_number`, `player_to_move`,
+  `phase`, `last_move`. This is `fetchBoardState` in `ogsState.go`.
+
+So: the socket tells us *when* to refresh; the REST endpoint tells us *what* the
+board looks like. (`gamedata` fires on connect and during scoring/finished, so
+the initial board loads as soon as we subscribe.)
+
+**Socket authentication is required.** OGS will not stream a game you're a party
+to until you emit `authenticate` with the `chat_auth` token from
+`/api/v1/ui/config`. Without it the socket connects but `gamedata` never fires.
+We authenticate but stay read-only (no move submission).
+
+**Emit only after the connection opens.** Emitting `authenticate`/`game/connect`
+before the Socket.IO handshake completes silently loses the subscription — so
+both emits happen inside the `OnConnection` handler, not right after `Dial`.
+
+## The problem the bridge solves
+
+`graarh/golang-socketio` is **callback-based**: `c.On(...)` invokes your
+function from its own goroutine. Bubble Tea is the opposite — a single-threaded
+Elm loop where all state changes happen inside `Update(msg)`. A socket callback
+can't touch the model directly. The bridge connects the two.
 
 ## The listen pattern
 
 1. The model owns one buffered channel, `events chan gameEvent`, created in
    `newModel`.
-2. The socket's `gamedata` callback parses the snapshot and pushes a
-   `gameEvent{gameID, state}` onto that channel (`connectGameCmd` in
-   `bridge.go`). The callback never blocks the UI — it only sends on a channel.
+2. On each socket trigger, `connectGameCmd` (in `bridge.go`) fetches the board
+   via `fetchBoardState` and pushes a `gameEvent{gameID, state}` onto the
+   channel. The fetch runs in the socket goroutine, never blocking the UI.
 3. `waitForGameEvent(ch)` is a `tea.Cmd` that **blocks** on `<-ch` and returns
    the event as a `tea.Msg`. It is started once in `Init` and lives for the
    whole app.
@@ -27,7 +51,7 @@ The bridge connects the two.
    in, one new listener out.
 
 ```
-socket goroutine → events chan → waitForGameEvent (blocks) → tea.Msg → Update → re-issue
+socket trigger → fetchBoardState → events chan → waitForGameEvent (blocks) → tea.Msg → Update → re-issue
 ```
 
 ## Connection lifecycle
@@ -56,13 +80,17 @@ instantly and refetches silently in the background.
 
 ## Scope (for now)
 
-Read-only. We subscribe to `gamedata` and render the snapshot. No socket
-`authenticate`, no move submission, no incremental `move`/`clock` handling yet.
+Read-only snapshot. We authenticate the socket, subscribe, and fetch/render the
+board on each trigger. No move submission and no incremental `move`/`clock`
+handling yet — so the board loads on focus but won't update stone-by-stone until
+the moves spec lands (`gamedata` refreshes it on connect and scoring/finished).
 
 ## Files
 
-- `ogsSocket.go` (`@region ogs:realtime`) — the Socket.IO client, `gamedata`
-  parsing, `Disconnect`. Adapted from termsuji.
+- `ogsSocket.go` (`@region ogs:realtime`) — the Socket.IO client: authenticate,
+  `game/connect`, `gamedata` trigger, `Disconnect`. Adapted from termsuji.
+- `ogsState.go` (`@region ogs:state`) — `fetchBoardState` (the computed board
+  from `termination-api`).
 - `bridge.go` (`@region ogs:bridge`) — `gameEvent`, `waitForGameEvent`,
-  `connectGameCmd`, `socketConnectedMsg`.
+  `connectGameCmd` (trigger → fetch → push), `socketConnectedMsg`.
 - `model.go` — owns the channel + socket, `syncFocus`, event routing.

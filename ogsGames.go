@@ -57,8 +57,8 @@ func (a ogsActiveGame) toGame(myID int64) game {
 		width:   a.Width,
 		height:  a.Height,
 		you:     you,
-		black:   player{name: a.Black.Username, rank: a.Black.Ranking},
-		white:   player{name: a.White.Username, rank: a.White.Ranking},
+		black:   player{id: a.Black.ID, name: a.Black.Username, rank: a.Black.Ranking},
+		white:   player{id: a.White.ID, name: a.White.Username, rank: a.White.Ranking},
 		state:   boardState{playerToMove: toMove, phase: gamePhase(a.JSON.Phase)},
 	}
 }
