@@ -40,6 +40,10 @@ func newModel() model {
 	if tabs, err := loadTabs(); err == nil {
 		m.tabs = tabs
 	}
+	// Local (hotseat) games list independently of OGS auth.
+	if lg, err := loadLocalGames(); err == nil {
+		m.home.setLocalGames(lg)
+	}
 	// Stored login: validate on launch, hide sign-in until it resolves,
 	// show the games loading indicator (tick started in Init).
 	if o, err := loadOGS(); err == nil && o.authenticated() {
@@ -56,13 +60,25 @@ func newModel() model {
 // Returns a cmd that connects the new tab's backend (nil when already open).
 func (m *model) openGame(g game) tea.Cmd {
 	for i, t := range m.tabs {
-		if t.Source == "ogs" && t.GameID == g.id {
+		if t.GameID == g.id {
 			m.active = i + 1
 			return nil
 		}
 	}
-	m.tabs = append(m.tabs, tabRef{Source: "ogs", GameID: g.id})
-	b := &ogsBackend{gameID: g.id, whiteID: g.white.id, ogs: m.ogs}
+	// Local games (negative id) reload from disk — the saved position is
+	// authoritative, and the home copy may be stale.
+	var b backend
+	source := "ogs"
+	if g.id < 0 {
+		fresh, lb, ok := openLocalGame(g.id)
+		if !ok {
+			return nil // record gone; nothing to open
+		}
+		source, g, b = "local", fresh, lb
+	} else {
+		b = &ogsBackend{gameID: g.id, whiteID: g.white.id, ogs: m.ogs}
+	}
+	m.tabs = append(m.tabs, tabRef{Source: source, GameID: g.id})
 	gm := newGameModel(len(m.games), g, b)
 	spin := gm.beginConnect()
 	m.games = append(m.games, gm)
@@ -112,12 +128,22 @@ func (m *model) restoreTabs(games []game) tea.Cmd {
 	var kept []tabRef
 	var cmds []tea.Cmd
 	for _, t := range m.tabs {
-		g, ok := byID[t.GameID]
-		if !ok {
-			continue
+		var g game
+		var b backend
+		if t.Source == "local" {
+			lg, lb, ok := openLocalGame(t.GameID)
+			if !ok {
+				continue // record gone
+			}
+			g, b = lg, lb
+		} else {
+			og, ok := byID[t.GameID]
+			if !ok {
+				continue // no longer an active OGS game (or logged out)
+			}
+			g, b = og, &ogsBackend{gameID: og.id, whiteID: og.white.id, ogs: m.ogs}
 		}
 		kept = append(kept, t)
-		b := &ogsBackend{gameID: g.id, whiteID: g.white.id, ogs: m.ogs}
 		gm := newGameModel(len(m.games), g, b)
 		cmds = append(cmds, gm.beginConnect(), connectBackendCmd(b, g.id, m.events))
 		m.games = append(m.games, gm)
@@ -197,7 +223,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.home.setAuthed(true, m.ogs.Username)
 			return m, tea.Batch(fetchGamesCmd(m.ogs), m.home.startLoading())
 		}
-		return m, nil
+		// Logged out / no stored auth: still restore local (hotseat) tabs.
+		return m, m.restoreTabs(nil)
 	case gamesLoadedMsg:
 		m.home.setGames(msg.games)
 		return m, m.restoreTabs(msg.games)

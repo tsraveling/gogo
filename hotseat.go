@@ -11,7 +11,8 @@ package main
 // via the onCommit hook; nil means don't persist.
 type hotseatBackend struct {
 	state    boardState
-	prevGrid [][]stoneColor  // position one ply back, for ko
+	prevGrid [][]stoneColor // position one ply back, for ko
+	moves    []move         // committed moves, in order (persisted)
 	emit     func(boardState)
 	onCommit func(*hotseatBackend) // persist hook; nil = no-op
 }
@@ -36,6 +37,7 @@ func (b *hotseatBackend) SubmitMove(m move) error {
 	}
 	b.prevGrid = b.state.grid // pre-move position becomes the ko reference
 	b.state = next
+	b.moves = append(b.moves, m)
 	if b.emit != nil {
 		b.emit(next)
 	}

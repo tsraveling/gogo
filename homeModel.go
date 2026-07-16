@@ -37,8 +37,9 @@ func (e homeEntry) selectable() bool {
 // Lists active games first, then actions.
 type homeModel struct {
 	entries     []homeEntry
-	cursor      int // index into entries, always on a selectable row
-	games       []game
+	cursor      int    // index into entries, always on a selectable row
+	games       []game // OGS active games
+	localGames  []game // local (hotseat) games
 	spinner     spinner.Model
 	loading     bool // fetching the game list
 	authed      bool
@@ -65,7 +66,10 @@ func (h *homeModel) rebuild() {
 	for _, g := range h.games {
 		e = append(e, homeEntry{kind: entryGame, game: g})
 	}
-	if len(h.games) > 0 {
+	for _, g := range h.localGames {
+		e = append(e, homeEntry{kind: entryGame, game: g})
+	}
+	if len(h.games)+len(h.localGames) > 0 {
 		e = append(e, homeEntry{kind: entrySpacer})
 	}
 	if !h.authed && !h.authPending {
@@ -112,6 +116,12 @@ func (h *homeModel) moveCursor(dir int) {
 func (h *homeModel) setGames(games []game) {
 	h.games = games
 	h.loading = false
+	h.rebuild()
+}
+
+// setLocalGames replaces the local-games list and rebuilds the menu.
+func (h *homeModel) setLocalGames(games []game) {
+	h.localGames = games
 	h.rebuild()
 }
 
@@ -237,13 +247,24 @@ func renderGameEntry(g game, selected bool) string {
 	if selected {
 		nameStyle = gameNameSelectedStyle
 	}
-	line1 := nameStyle.Bold(g.yourTurn()).Render(g.name) + " " +
+	prefix := ""
+	if g.id < 0 {
+		prefix = gameMetaStyle.Render("Local: ")
+	}
+	line1 := prefix + nameStyle.Bold(g.yourTurn()).Render(g.name) + " " +
 		gameMetaStyle.Render(fmt.Sprintf("(%dx%d)", g.width, g.height))
-	line2 := playerName(g, black) + " " +
-		rankParen("●", g.black.rankString()) + " " +
-		gameMetaStyle.Render("vs") + " " +
-		playerName(g, white) + " " +
-		rankParen("○", g.white.rankString())
+	var line2 string
+	if g.id < 0 { // local: no ranks
+		line2 = playerName(g, black) + " " + stoneStyle.Render("●") + " " +
+			gameMetaStyle.Render("vs") + " " +
+			playerName(g, white) + " " + stoneStyle.Render("○")
+	} else {
+		line2 = playerName(g, black) + " " +
+			rankParen("●", g.black.rankString()) + " " +
+			gameMetaStyle.Render("vs") + " " +
+			playerName(g, white) + " " +
+			rankParen("○", g.white.rankString())
+	}
 	return gutter(lipgloss.JoinVertical(lipgloss.Left, line1, line2), selected)
 }
 
