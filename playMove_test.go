@@ -152,6 +152,42 @@ func TestTwoPassGameOverAndDelete(t *testing.T) {
 	}
 }
 
+// In a sided (OGS) game you can only place/play on your turn; hotseat is always live.
+func TestTurnGating(t *testing.T) {
+	// Sided game, opponent (white) to move.
+	g := game{id: 1, width: 9, height: 9, you: black,
+		state: boardState{grid: newBoardState(9, 9).grid, playerToMove: white, phase: phasePlay}}
+	gm := newGameModel(0, g, &ogsBackend{})
+	gm.applySnapshot(g.state)
+
+	if gm.myTurn() || gm.canPlay() {
+		t.Fatalf("should not be able to play on opponent's turn")
+	}
+	gm.board.SetCursor(2, 2)
+	gm, _ = gm.Update(tea.KeyMsg{Type: tea.KeySpace})
+	if gm.board.ghostActive {
+		t.Fatalf("space must not place a ghost when it's not your turn")
+	}
+
+	// Your turn now: placement works.
+	st := g.state
+	st.playerToMove = black
+	gm.applySnapshot(st)
+	if !gm.canPlay() {
+		t.Fatalf("should be able to play on your turn")
+	}
+	gm, _ = gm.Update(tea.KeyMsg{Type: tea.KeySpace})
+	if !gm.board.ghostActive {
+		t.Fatalf("space should place a ghost on your turn")
+	}
+
+	// Hotseat (you == empty) is always your turn.
+	hs := newGameModel(0, game{width: 9, height: 9, you: empty, state: newBoardState(9, 9)}, nil)
+	if !hs.myTurn() {
+		t.Fatalf("hotseat should always be your turn")
+	}
+}
+
 // Fast mode: m toggles it; space then plays immediately without a ghost.
 func TestFastMode(t *testing.T) {
 	gm, _, _ := newTestGameModel()

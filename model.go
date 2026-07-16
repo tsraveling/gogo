@@ -170,6 +170,15 @@ func (m model) tabCount() int {
 	return len(m.games) + 1
 }
 
+// Refreshes the OGS game list when the home tab is focused and authenticated.
+// Called on every navigation back to home so the list stays current.
+func (m *model) refreshIfHome() tea.Cmd {
+	if m.active != 0 || !m.ogs.authenticated() {
+		return nil
+	}
+	return tea.Batch(fetchGamesCmd(m.ogs), m.home.startLoading())
+}
+
 // Result of validating persisted auth at launch.
 type authLoadedMsg struct {
 	ogs ogsModel
@@ -249,7 +258,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, waitForGameEvent(m.events) // keep listening
 	case moveResultMsg:
 		if gm := m.gameByID(msg.gameID); gm != nil {
-			gm.applyMoveResult(msg.err)
+			return m, gm.applyMoveResult(msg.err)
 		}
 		return m, nil
 	case backendConnectedMsg:
@@ -261,6 +270,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case navErrorExpiredMsg:
+		if msg.game >= 0 && msg.game < len(m.games) {
+			var cmd tea.Cmd
+			m.games[msg.game], cmd = m.games[msg.game].Update(msg)
+			return m, cmd
+		}
+		return m, nil
+	case submitOKExpiredMsg:
 		if msg.game >= 0 && msg.game < len(m.games) {
 			var cmd tea.Cmd
 			m.games[msg.game], cmd = m.games[msg.game].Update(msg)
@@ -336,7 +352,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// X closes the focused game tab (home tab can't close).
 		if msg.String() == "X" && m.active > 0 {
 			m.closeTab(m.active - 1)
-			return m, nil
+			return m, m.refreshIfHome() // refresh if we landed back on home
 		}
 		// r refetches the game list when authenticated.
 		if msg.String() == "r" && m.ogs.authenticated() {
@@ -350,10 +366,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "tab", "]":
 			m.active = (m.active + 1) % m.tabCount()
-			return m, nil
+			return m, m.refreshIfHome()
 		case "shift+tab", "[":
 			m.active = (m.active - 1 + m.tabCount()) % m.tabCount()
-			return m, nil
+			return m, m.refreshIfHome()
 		}
 		// Delegate remaining keys to the active tab.
 		var cmd tea.Cmd

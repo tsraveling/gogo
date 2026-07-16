@@ -2,6 +2,8 @@ package main
 
 import (
 	"errors"
+	"sync"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -19,12 +21,24 @@ type backend interface {
 	// Submits a move (a pass is a move with isPass()); the resulting state
 	// arrives via emit. A non-nil error means the move was rejected.
 	SubmitMove(m move) error
+	// Reports whether SubmitMove applies synchronously (no submit spinner/✓).
+	// True for local backends (hotseat/gnugo), false for OGS.
+	Instant() bool
 	// Releases resources (socket, subprocess). Safe on a nil backend.
 	Disconnect()
 }
 
 // Move submission not yet wired for this backend (see _spec/playing.md).
 var errSubmitUnsupported = errors.New("move submission not supported yet")
+
+// The socket isn't connected yet.
+var errNoSocket = errors.New("game socket not connected")
+
+// The server didn't confirm the move in time (likely rejected).
+var errMoveTimeout = errors.New("move not confirmed by server")
+
+// How long to wait for OGS to broadcast our move before treating it as failed.
+const ogsMoveTimeout = 5 * time.Second
 
 // Reports a backend connection attempt's result, routed by gameID.
 type backendConnectedMsg struct {
@@ -51,6 +65,9 @@ type ogsBackend struct {
 	whiteID int64 // maps player_to_move to a side
 	ogs     ogsModel
 	socket  *gameSocket
+
+	mu    sync.Mutex
+	ackCh chan error // set while a SubmitMove awaits the server's broadcast
 }
 
 func (b *ogsBackend) Connect(emit func(boardState)) error {
@@ -59,9 +76,11 @@ func (b *ogsBackend) Connect(emit func(boardState)) error {
 	onChange := func() {
 		st, err := fetchBoardState(b.ogs.AccessToken, b.gameID, b.whiteID)
 		if err != nil {
+			b.signalAck(err) // unblock a pending submit even if the refetch failed
 			return
 		}
 		emit(st)
+		b.signalAck(nil) // our move (or any update) landed
 	}
 	s, err := connectGame(b.gameID, auth, onChange)
 	if err != nil {
@@ -71,6 +90,44 @@ func (b *ogsBackend) Connect(emit func(boardState)) error {
 	return nil
 }
 
-func (b *ogsBackend) SubmitMove(move) error { return errSubmitUnsupported }
+// Emits the move, then waits for OGS to broadcast the new state (gamedata →
+// board refetch). Server is authoritative; a timeout surfaces as a reject.
+func (b *ogsBackend) SubmitMove(m move) error {
+	ch := make(chan error, 1)
+	b.mu.Lock()
+	b.ackCh = ch
+	b.mu.Unlock()
+
+	if err := b.socket.submitMove(b.ogs.UserID, m); err != nil {
+		b.clearAck()
+		return err
+	}
+	select {
+	case err := <-ch:
+		return err
+	case <-time.After(ogsMoveTimeout):
+		b.clearAck()
+		return errMoveTimeout
+	}
+}
+
+// Resolves a pending SubmitMove, if any, with the given result.
+func (b *ogsBackend) signalAck(err error) {
+	b.mu.Lock()
+	ch := b.ackCh
+	b.ackCh = nil
+	b.mu.Unlock()
+	if ch != nil {
+		ch <- err
+	}
+}
+
+func (b *ogsBackend) clearAck() {
+	b.mu.Lock()
+	b.ackCh = nil
+	b.mu.Unlock()
+}
+
+func (b *ogsBackend) Instant() bool { return false }
 
 func (b *ogsBackend) Disconnect() { b.socket.Disconnect() }

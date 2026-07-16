@@ -47,5 +47,7 @@ func (b *hotseatBackend) SubmitMove(m move) error {
 	return nil
 }
 
+func (b *hotseatBackend) Instant() bool { return true }
+
 // Nothing to tear down — state is in memory and persisted on commit.
 func (b *hotseatBackend) Disconnect() {}

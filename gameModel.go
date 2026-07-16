@@ -29,9 +29,13 @@ type gameModel struct {
 	connectErr  bool   // the socket failed to connect
 	committing  bool   // a move submission is in flight
 	moveErr     string // last rejected move, shown in the control area
+	submitOK    bool   // brief ✓ after a confirmed remote submit
 	passConfirm bool   // pass-confirm box is open, capturing input
 	fastMode    bool   // space plays immediately, skipping the ghost step
 }
+
+// How long the green ✓ shows after a confirmed OGS submit.
+const submitOKTTL = 900 * time.Millisecond
 
 func newGameModel(idx int, g game, b backend) gameModel {
 	ti := textinput.New()
@@ -90,15 +94,27 @@ func submitMoveCmd(b backend, gameID int64, m move) tea.Cmd {
 }
 
 // Clears the in-flight flag; on success drops the ghost, on reject keeps it for
-// retry and surfaces the reason.
-func (g *gameModel) applyMoveResult(err error) {
+// retry and surfaces the reason. Remote (OGS) submits flash a brief ✓.
+func (g *gameModel) applyMoveResult(err error) tea.Cmd {
 	g.committing = false
 	if err != nil {
 		g.moveErr = moveErrText(err)
-		return
+		return nil
 	}
 	g.board.ClearGhost()
 	g.moveErr = ""
+	if !g.backend.Instant() {
+		g.submitOK = true
+		return submitOKCmd(g.idx)
+	}
+	return nil
+}
+
+// Dismisses the ✓ badge on a specific game.
+type submitOKExpiredMsg struct{ game int }
+
+func submitOKCmd(idx int) tea.Cmd {
+	return tea.Tick(submitOKTTL, func(time.Time) tea.Msg { return submitOKExpiredMsg{game: idx} })
 }
 
 // The color the local player would place: their fixed side, or the side to move
@@ -110,9 +126,17 @@ func (g gameModel) placingColor() stoneColor {
 	return g.game.state.playerToMove
 }
 
-// Play is possible only once a live position is loaded and the game is ongoing.
+// Whether it's the local player's move. Hotseat (you == empty) is always live —
+// either side plays; sided games (OGS) require it to be your turn.
+func (g gameModel) myTurn() bool {
+	return g.game.you == empty || g.game.yourTurn()
+}
+
+// Play is possible only once a live position is loaded, the game is ongoing, and
+// it's the local player's move.
 func (g gameModel) canPlay() bool {
-	return !g.connecting && !g.connectErr && g.board.grid != nil && !g.game.state.finished()
+	return !g.connecting && !g.connectErr && g.board.grid != nil &&
+		!g.game.state.finished() && g.myTurn()
 }
 
 // Human-readable reason for a rejected move.
@@ -151,6 +175,9 @@ func (g gameModel) Update(msg tea.Msg) (gameModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case navErrorExpiredMsg:
 		g.navErr = false
+		return g, nil
+	case submitOKExpiredMsg:
+		g.submitOK = false
 		return g, nil
 	case spinner.TickMsg:
 		if !g.connecting && !g.committing {
@@ -355,9 +382,13 @@ func (g gameModel) controlView(w int) string {
 			gameOverStyle.Render("⚑ Game over"), dimStyle.Render("(both passed)")))
 	case g.committing:
 		return box.Render(lipgloss.JoinVertical(lipgloss.Left, "", g.spinner.View()+dimStyle.Render(" Submitting move…")))
+	case g.submitOK:
+		return box.Render(lipgloss.JoinVertical(lipgloss.Left, "", successStyle.Render("✓ Move submitted")))
 	case g.moveErr != "":
 		return box.Render(lipgloss.JoinVertical(lipgloss.Left,
 			errorStyle.Render(g.moveErr), dimStyle.Render("space: reposition · enter: retry")))
+	case !g.myTurn():
+		return box.Render(lipgloss.JoinVertical(lipgloss.Left, "", dimStyle.Render("Waiting for opponent…")))
 	case g.board.ghostActive:
 		return box.Render(lipgloss.JoinVertical(lipgloss.Left, g.fastTag(), dimStyle.Render("hit enter to submit · p: pass")))
 	default:
