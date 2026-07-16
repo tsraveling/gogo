@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-
-	"github.com/charmbracelet/lipgloss"
 )
 
 // @region board:view-model
@@ -114,8 +112,8 @@ func (b boardModel) View() string {
 	sb.WriteString(letters)
 	for y := 0; y < b.height; y++ {
 		num := b.height - y // 1 is the bottom row, climbing upward
-		left := boardLabelStyle.Render(fmt.Sprintf("%*d", numW, num))
-		right := boardLabelStyle.Render(fmt.Sprintf("%-*d", numW, num))
+		left := currentTheme.label.Render(fmt.Sprintf("%*d", numW, num))
+		right := currentTheme.label.Render(fmt.Sprintf("%-*d", numW, num))
 		sb.WriteByte('\n')
 		sb.WriteString(left)
 		sb.WriteString(b.boardRow(y))
@@ -133,7 +131,7 @@ func (b boardModel) letterRow(numW int) string {
 		cells[x] = string(coordLetters[x])
 	}
 	prefix := strings.Repeat(" ", numW+1)
-	return prefix + boardLabelStyle.Render(strings.Join(cells, " "))
+	return prefix + currentTheme.label.Render(strings.Join(cells, " "))
 }
 
 // One board line, including the left/right margin chars. Points are spaced by
@@ -147,7 +145,7 @@ func (b boardModel) boardRow(y int) string {
 
 	var sb strings.Builder
 	if cx == 0 {
-		sb.WriteString(boardCursorStyle.Render("["))
+		sb.WriteString(currentTheme.cursor.Render("["))
 	} else {
 		sb.WriteByte(' ')
 	}
@@ -158,49 +156,35 @@ func (b boardModel) boardRow(y int) string {
 		}
 		switch {
 		case x == cx:
-			sb.WriteString(boardCursorStyle.Render("]"))
+			sb.WriteString(currentTheme.cursor.Render("]"))
 		case x+1 == cx:
-			sb.WriteString(boardCursorStyle.Render("["))
+			sb.WriteString(currentTheme.cursor.Render("["))
 		default:
 			sb.WriteByte(' ')
 		}
 	}
 	if cx == b.width-1 {
-		sb.WriteString(boardCursorStyle.Render("]"))
+		sb.WriteString(currentTheme.cursor.Render("]"))
 	} else {
 		sb.WriteByte(' ')
 	}
 	return sb.String()
 }
 
-// Stone glyph for occupied points; hollow variant for an uncommitted ghost.
-const stoneGlyph = "●"
-const ghostGlyph = "○"
-
-// One point: a colored stone if occupied, a hollow ghost if previewed, else a
-// yellow "+" star / "." empty.
+// One point (via the active theme): a stone if occupied, a dimmed ghost if
+// previewed, else a star or empty intersection.
 func (b boardModel) cellStr(x, y int) string {
 	switch b.stoneAt(x, y) {
-	case black:
-		return stoneBlackStyle.Render(stoneGlyph)
-	case white:
-		return stoneWhiteStyle.Render(stoneGlyph)
+	case black, white:
+		return currentTheme.stoneCell(b.stoneAt(x, y))
 	}
 	if b.ghostActive && b.ghostX == x && b.ghostY == y {
-		return ghostCellStyle(b.ghostColor).Render(ghostGlyph)
+		return currentTheme.ghostCell(b.ghostColor)
 	}
 	if b.isStar(x, y) {
-		return boardPointStyle.Render("+")
+		return currentTheme.grid.Render(currentTheme.starGlyph)
 	}
-	return boardPointStyle.Render(".")
-}
-
-// Ghost preview style for the placing side.
-func ghostCellStyle(c stoneColor) lipgloss.Style {
-	if c == white {
-		return ghostWhiteStyle
-	}
-	return ghostBlackStyle
+	return currentTheme.grid.Render(currentTheme.emptyGlyph)
 }
 
 // Star point (hoshi) test. Square boards only; matches standard 9/13/19 layouts.

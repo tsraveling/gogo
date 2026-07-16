@@ -10,18 +10,7 @@ var (
 
 	titleStyle = lipgloss.NewStyle().Bold(true).Foreground(primaryColor)
 
-	// Board grid points (empty + star), coordinate labels, and the nav cursor.
-	boardPointStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
-	boardLabelStyle  = lipgloss.NewStyle().Foreground(dimColor)
-	boardCursorStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("231"))
-
-	// Stones: black is a dim steel gray, white a bright white.
-	stoneBlackStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	stoneWhiteStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("231"))
-
-	// Ghost (uncommitted move) preview: dimmed to read as tentative.
-	ghostBlackStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	ghostWhiteStyle = lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("252"))
+	// Board glyphs/colors live in theme.go (boardTheme / currentTheme).
 
 	// Pass-confirm box: yellow border, warns before ending the turn.
 	passBoxStyle = lipgloss.NewStyle().
@@ -53,10 +42,10 @@ var (
 	// White stone glyph inside the rank paren, so the color marker stands out.
 	stoneStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("231"))
 
-	// Game info player bars: black bg/white text, and its inverse.
+	// Game info player bars: black bg/white text, and its inverse. Turn marker
+	// lives in the board theme (theme.go).
 	infoBlackStyle = lipgloss.NewStyle().Background(lipgloss.Color("0")).Foreground(lipgloss.Color("231"))
 	infoWhiteStyle = lipgloss.NewStyle().Background(lipgloss.Color("231")).Foreground(lipgloss.Color("0"))
-	turnDotStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
 
 	dimStyle     = lipgloss.NewStyle().Foreground(dimColor)
 	errorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))

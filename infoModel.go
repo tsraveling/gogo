@@ -14,9 +14,6 @@ func newInfoModel() infoModel {
 	return infoModel{}
 }
 
-// Yellow turn marker; a space keeps the bar aligned when it's not that side's move.
-const turnDot = "●"
-
 func (i infoModel) View(g game, w, h int) string {
 	lines := []string{
 		i.playerRow(g, w),
@@ -31,21 +28,23 @@ func (i infoModel) View(g game, w, h int) string {
 	return lipgloss.NewStyle().Width(w).Height(h).Render(rows)
 }
 
-// `● black    vs    white ●` — black bg left, white bg right, turn dot outside.
+// `▶ black ●   vs   ▶ white ●` — both sides share the same orientation:
+// turn marker, name bar, then a sample stone.
 func (i infoModel) playerRow(g game, w int) string {
+	th := currentTheme
 	bBar := infoBlackStyle.Render(" " + g.black.name + " ")
 	wBar := infoWhiteStyle.Render(" " + g.white.name + " ")
 
 	lTurn, rTurn := " ", " "
 	if g.state.playerToMove == black {
-		lTurn = turnDotStyle.Render(turnDot)
+		lTurn = th.turn.Render(th.turnGlyph)
 	}
 	if g.state.playerToMove == white {
-		rTurn = turnDotStyle.Render(turnDot)
+		rTurn = th.turn.Render(th.turnGlyph)
 	}
 
-	left := lTurn + " " + bBar
-	right := wBar + " " + rTurn
+	left := lTurn + " " + bBar + " " + th.stoneCell(black)
+	right := rTurn + " " + wBar + " " + th.stoneCell(white)
 	return splitMid(left, " vs ", right, w)
 }
 
