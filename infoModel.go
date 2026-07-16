@@ -18,13 +18,16 @@ func newInfoModel() infoModel {
 const turnDot = "●"
 
 func (i infoModel) View(g game, w, h int) string {
-	rows := lipgloss.JoinVertical(
-		lipgloss.Left,
+	lines := []string{
 		i.playerRow(g, w),
 		splitLR(dimStyle.Render(fmt.Sprintf("Handicap: %d", g.handicap)),
 			dimStyle.Render(fmt.Sprintf("Komi: %.1f", g.komi)), w),
 		dimStyle.Render("0 captures"),
-	)
+	}
+	if g.state.finished() {
+		lines = append(lines, gameOverStyle.Render("⚑ finished")+dimStyle.Render(" — both passed"))
+	}
+	rows := lipgloss.JoinVertical(lipgloss.Left, lines...)
 	return lipgloss.NewStyle().Width(w).Height(h).Render(rows)
 }
 

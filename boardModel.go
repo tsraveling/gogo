@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/charmbracelet/lipgloss"
 )
 
 // @region board:view-model
@@ -19,6 +21,12 @@ type boardModel struct {
 	interactable bool           // show and move a cursor
 	cursorX      int
 	cursorY      int
+
+	// Uncommitted move preview: a hollow stone shown before enter commits it.
+	ghostActive bool
+	ghostX      int
+	ghostY      int
+	ghostColor  stoneColor
 }
 
 func newBoardModel(w, h int) boardModel {
@@ -46,6 +54,14 @@ func (b *boardModel) SetCursor(x, y int) {
 
 // Steps the cursor, clamped to the board edges.
 func (b *boardModel) MoveCursor(dx, dy int) { b.SetCursor(b.cursorX+dx, b.cursorY+dy) }
+
+// Shows an uncommitted move preview at a point.
+func (b *boardModel) SetGhost(x, y int, c stoneColor) {
+	b.ghostActive = true
+	b.ghostX, b.ghostY, b.ghostColor = x, y, c
+}
+
+func (b *boardModel) ClearGhost() { b.ghostActive = false }
 
 // Parses a coordinate like "A1" (letter + row, 1 = bottom). ok is false if
 // out of range or malformed.
@@ -157,10 +173,12 @@ func (b boardModel) boardRow(y int) string {
 	return sb.String()
 }
 
-// Stone glyph for occupied points.
+// Stone glyph for occupied points; hollow variant for an uncommitted ghost.
 const stoneGlyph = "●"
+const ghostGlyph = "○"
 
-// One point: a colored stone if occupied, else a yellow "+" star / "." empty.
+// One point: a colored stone if occupied, a hollow ghost if previewed, else a
+// yellow "+" star / "." empty.
 func (b boardModel) cellStr(x, y int) string {
 	switch b.stoneAt(x, y) {
 	case black:
@@ -168,10 +186,21 @@ func (b boardModel) cellStr(x, y int) string {
 	case white:
 		return stoneWhiteStyle.Render(stoneGlyph)
 	}
+	if b.ghostActive && b.ghostX == x && b.ghostY == y {
+		return ghostCellStyle(b.ghostColor).Render(ghostGlyph)
+	}
 	if b.isStar(x, y) {
 		return boardPointStyle.Render("+")
 	}
 	return boardPointStyle.Render(".")
+}
+
+// Ghost preview style for the placing side.
+func ghostCellStyle(c stoneColor) lipgloss.Style {
+	if c == white {
+		return ghostWhiteStyle
+	}
+	return ghostBlackStyle
 }
 
 // Star point (hoshi) test. Square boards only; matches standard 9/13/19 layouts.

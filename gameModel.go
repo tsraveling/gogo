@@ -15,18 +15,22 @@ const navErrorTTL = 800 * time.Millisecond
 
 // A single active game: board column + meta column.
 type gameModel struct {
-	idx        int     // index into the parent's games slice, for routed messages
-	game       game    // core game state this tab tracks
-	backend    backend // where this game's authority lives (ogs/local/gnugo)
-	board      boardModel
-	info       infoModel
-	chat       chatModel
-	navMode    bool // "Go to" prompt is open, capturing input
-	navErr     bool // last entry was invalid; flashing
-	navGoto    textinput.Model
-	spinner    spinner.Model
-	connecting bool // awaiting the first gamedata snapshot
-	connectErr bool // the socket failed to connect
+	idx         int     // index into the parent's games slice, for routed messages
+	game        game    // core game state this tab tracks
+	backend     backend // where this game's authority lives (ogs/local/gnugo)
+	board       boardModel
+	info        infoModel
+	chat        chatModel
+	navMode     bool // "Go to" prompt is open, capturing input
+	navErr      bool // last entry was invalid; flashing
+	navGoto     textinput.Model
+	spinner     spinner.Model
+	connecting  bool   // awaiting the first gamedata snapshot
+	connectErr  bool   // the socket failed to connect
+	committing  bool   // a move submission is in flight
+	moveErr     string // last rejected move, shown in the control area
+	passConfirm bool   // pass-confirm box is open, capturing input
+	fastMode    bool   // space plays immediately, skipping the ghost step
 }
 
 func newGameModel(idx int, g game, b backend) gameModel {
@@ -39,14 +43,15 @@ func newGameModel(idx int, g game, b backend) gameModel {
 	sp.Spinner = spinner.Dot
 	sp.Style = lipgloss.NewStyle().Foreground(primaryColor)
 	return gameModel{
-		idx:     idx,
-		game:    g,
-		backend: b,
-		board:   newBoardModel(g.width, g.height),
-		info:    newInfoModel(),
-		chat:    newChatModel(),
-		navGoto: ti,
-		spinner: sp,
+		idx:      idx,
+		game:     g,
+		backend:  b,
+		board:    newBoardModel(g.width, g.height),
+		info:     newInfoModel(),
+		chat:     newChatModel(),
+		navGoto:  ti,
+		spinner:  sp,
+		fastMode: g.you == empty, // hotseat: no fixed side, default to fast play
 	}
 }
 
@@ -70,6 +75,66 @@ func (g *gameModel) applySnapshot(st boardState) {
 	g.connectErr = false
 }
 
+// Result of a move submission, routed back to its game tab. The new board
+// arrives separately as a snapshot via the events channel.
+type moveResultMsg struct {
+	gameID int64
+	err    error
+}
+
+// Submits a move off the UI goroutine.
+func submitMoveCmd(b backend, gameID int64, m move) tea.Cmd {
+	return func() tea.Msg {
+		return moveResultMsg{gameID: gameID, err: b.SubmitMove(m)}
+	}
+}
+
+// Clears the in-flight flag; on success drops the ghost, on reject keeps it for
+// retry and surfaces the reason.
+func (g *gameModel) applyMoveResult(err error) {
+	g.committing = false
+	if err != nil {
+		g.moveErr = moveErrText(err)
+		return
+	}
+	g.board.ClearGhost()
+	g.moveErr = ""
+}
+
+// The color the local player would place: their fixed side, or the side to move
+// in a hotseat game (you == empty).
+func (g gameModel) placingColor() stoneColor {
+	if g.game.you != empty {
+		return g.game.you
+	}
+	return g.game.state.playerToMove
+}
+
+// Play is possible only once a live position is loaded and the game is ongoing.
+func (g gameModel) canPlay() bool {
+	return !g.connecting && !g.connectErr && g.board.grid != nil && !g.game.state.finished()
+}
+
+// Human-readable reason for a rejected move.
+func moveErrText(err error) string {
+	switch err {
+	case errOccupied:
+		return "Point occupied"
+	case errSuicide:
+		return "Suicide — illegal"
+	case errKo:
+		return "Ko — illegal recapture"
+	case errNotYourTurn:
+		return "Not your turn"
+	case errOffBoard:
+		return "Off board"
+	case errGameOver:
+		return "Game over"
+	default:
+		return err.Error()
+	}
+}
+
 // Dismisses the invalid-position flash on a specific game.
 type navErrorExpiredMsg struct{ game int }
 
@@ -77,8 +142,8 @@ func navErrorCmd(idx int) tea.Cmd {
 	return tea.Tick(navErrorTTL, func(time.Time) tea.Msg { return navErrorExpiredMsg{game: idx} })
 }
 
-// True while the "Go to" prompt should swallow keys (tabs/quit disabled).
-func (g gameModel) capturingInput() bool { return g.navMode }
+// True while a modal-like prompt should swallow keys (tabs/quit disabled).
+func (g gameModel) capturingInput() bool { return g.navMode || g.passConfirm }
 
 // @region board:navigation
 
@@ -88,7 +153,7 @@ func (g gameModel) Update(msg tea.Msg) (gameModel, tea.Cmd) {
 		g.navErr = false
 		return g, nil
 	case spinner.TickMsg:
-		if !g.connecting {
+		if !g.connecting && !g.committing {
 			return g, nil
 		}
 		var cmd tea.Cmd
@@ -98,12 +163,35 @@ func (g gameModel) Update(msg tea.Msg) (gameModel, tea.Cmd) {
 		if g.navMode {
 			return g.updateNav(msg)
 		}
+		if g.passConfirm {
+			return g.updatePassConfirm(msg)
+		}
+		if g.committing {
+			return g, nil // board frozen while a move is in flight
+		}
 		switch msg.String() {
 		case "g":
 			g.navMode = true
 			g.navErr = false
 			g.navGoto.Reset()
 			return g, g.navGoto.Focus()
+		case "m":
+			g.fastMode = !g.fastMode
+			g.board.ClearGhost() // drop any pending ghost when switching modes
+			return g, nil
+		case " ":
+			if g.fastMode {
+				return g.submitAt(g.board.cursorX, g.board.cursorY)
+			}
+			g.toggleGhost()
+			return g, nil
+		case "enter":
+			return g.commitMove()
+		case "p":
+			if g.canPlay() {
+				g.passConfirm = true
+			}
+			return g, nil
 		case "up", "k":
 			g.board.MoveCursor(0, -1)
 		case "down", "j":
@@ -152,6 +240,59 @@ func (g *gameModel) closeNav() {
 	g.navGoto.Reset()
 }
 
+// @region board:play
+
+// Places a ghost at the cursor, relocates it, or clears it when it's already
+// there. No-op on occupied points or a read-only board.
+func (g *gameModel) toggleGhost() {
+	if !g.canPlay() {
+		return
+	}
+	x, y := g.board.cursorX, g.board.cursorY
+	if g.board.stoneAt(x, y) != empty {
+		return
+	}
+	if g.board.ghostActive && g.board.ghostX == x && g.board.ghostY == y {
+		g.board.ClearGhost()
+		return
+	}
+	g.board.SetGhost(x, y, g.placingColor())
+}
+
+// Submits the ghosted move; no-op without a ghost.
+func (g gameModel) commitMove() (gameModel, tea.Cmd) {
+	if !g.board.ghostActive {
+		return g, nil
+	}
+	return g.submitAt(g.board.ghostX, g.board.ghostY)
+}
+
+// Submits a stone at a point. No-op on a read-only board or an occupied point.
+func (g gameModel) submitAt(x, y int) (gameModel, tea.Cmd) {
+	if !g.canPlay() || g.board.stoneAt(x, y) != empty {
+		return g, nil
+	}
+	m := move{x: x, y: y, color: g.placingColor()}
+	g.committing = true
+	g.moveErr = ""
+	return g, tea.Batch(submitMoveCmd(g.backend, g.game.id, m), g.spinner.Tick)
+}
+
+// Handles keys while the pass-confirm box is open.
+func (g gameModel) updatePassConfirm(msg tea.KeyMsg) (gameModel, tea.Cmd) {
+	switch msg.String() {
+	case "enter":
+		g.passConfirm = false
+		m := move{x: -1, y: -1, color: g.placingColor()}
+		g.committing = true
+		g.moveErr = ""
+		return g, tea.Batch(submitMoveCmd(g.backend, g.game.id, m), g.spinner.Tick)
+	case "esc":
+		g.passConfirm = false
+	}
+	return g, nil
+}
+
 // @region board:view-model
 
 func (g gameModel) View(termW, termH int) string {
@@ -196,15 +337,42 @@ func (g gameModel) centeredBoardBox(w int, content string) string {
 	return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, content)
 }
 
-// Two-row board control: the "Go to" prompt (with error flash) or a key hint.
+// Board control area: pass-confirm box, "Go to" prompt, move-submission status,
+// or a key hint, depending on state.
 func (g gameModel) controlView(w int) string {
 	box := lipgloss.NewStyle().Width(w).Height(2)
-	if g.navMode {
+	switch {
+	case g.passConfirm:
+		return passBoxStyle.Render("⚠ Pass?  " + dimStyle.Render("enter: confirm · esc: cancel"))
+	case g.navMode:
 		top := ""
 		if g.navErr {
 			top = errorStyle.Render("Invalid position")
 		}
 		return box.Render(lipgloss.JoinVertical(lipgloss.Left, top, g.navGoto.View()))
+	case g.game.state.finished():
+		return box.Render(lipgloss.JoinVertical(lipgloss.Left,
+			gameOverStyle.Render("⚑ Game over"), dimStyle.Render("(both passed)")))
+	case g.committing:
+		return box.Render(lipgloss.JoinVertical(lipgloss.Left, "", g.spinner.View()+dimStyle.Render(" Submitting move…")))
+	case g.moveErr != "":
+		return box.Render(lipgloss.JoinVertical(lipgloss.Left,
+			errorStyle.Render(g.moveErr), dimStyle.Render("space: reposition · enter: retry")))
+	case g.board.ghostActive:
+		return box.Render(lipgloss.JoinVertical(lipgloss.Left, g.fastTag(), dimStyle.Render("hit enter to submit · p: pass")))
+	default:
+		hint := "space: place · p: pass · g: go to · m: fast"
+		if g.fastMode {
+			hint = "space: play · p: pass · g: go to · m: normal"
+		}
+		return box.Render(lipgloss.JoinVertical(lipgloss.Left, g.fastTag(), dimStyle.Render(hint)))
 	}
-	return box.Render(lipgloss.JoinVertical(lipgloss.Left, "", dimStyle.Render("g: go to")))
+}
+
+// Green FAST badge when fast mode is on; empty otherwise.
+func (g gameModel) fastTag() string {
+	if g.fastMode {
+		return successStyle.Render("FAST")
+	}
+	return ""
 }

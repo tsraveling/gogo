@@ -19,6 +19,16 @@ var (
 	stoneBlackStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	stoneWhiteStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("231"))
 
+	// Ghost (uncommitted move) preview: dimmed to read as tentative.
+	ghostBlackStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	ghostWhiteStyle = lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("252"))
+
+	// Pass-confirm box: yellow border, warns before ending the turn.
+	passBoxStyle = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("11")).
+			Padding(0, 1)
+
 	// Stub panel backgrounds — placeholder until real content lands.
 	boardBg   = lipgloss.Color("236")
 	controlBg = lipgloss.Color("238")
@@ -51,6 +61,8 @@ var (
 	dimStyle     = lipgloss.NewStyle().Foreground(dimColor)
 	errorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
 	successStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("46"))
+	// Finished-game marker (both players passed). Scoring is separate.
+	gameOverStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("220"))
 
 	// Auth modal box.
 	modalStyle = lipgloss.NewStyle().

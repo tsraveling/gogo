@@ -186,6 +186,22 @@ func persistLocalGame(meta game, st boardState, prevGrid [][]stoneColor, moves [
 	return saveLocalStore(s)
 }
 
+// Removes a local game from the store. No-op if the id isn't present.
+func deleteLocalGame(id int64) error {
+	s, err := loadLocalStore()
+	if err != nil {
+		return err
+	}
+	out := s.Games[:0]
+	for _, r := range s.Games {
+		if r.ID != id {
+			out = append(out, r)
+		}
+	}
+	s.Games = out
+	return saveLocalStore(s)
+}
+
 // Creates, persists, and returns a fresh local game (black to move, empty board).
 // Ids are negative and monotonically decreasing. Used by the setup modal.
 func newLocalGame(size boardSize, rs ruleset, komi float64, blackName, whiteName string) (game, error) {

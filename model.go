@@ -90,8 +90,11 @@ func (m *model) openGame(g game) tea.Cmd {
 	return tea.Batch(connectBackendCmd(b, g.id, m.events), spin)
 }
 
-// Closes the game tab at games-index i (active-1), reindexing the rest.
+// Closes the game tab at games-index i (active-1), reindexing the rest. A
+// finished local game is deleted outright (no scoring/archive yet).
 func (m *model) closeTab(i int) {
+	ref := m.tabs[i]
+	finished := m.games[i].game.state.finished()
 	m.games[i].backend.Disconnect()
 	m.games = append(m.games[:i], m.games[i+1:]...)
 	m.tabs = append(m.tabs[:i], m.tabs[i+1:]...)
@@ -99,6 +102,12 @@ func (m *model) closeTab(i int) {
 		m.games[j].idx = j
 	}
 	_ = saveTabs(m.tabs)
+	if ref.Source == "local" && finished {
+		_ = deleteLocalGame(ref.GameID)
+		if lg, err := loadLocalGames(); err == nil {
+			m.home.setLocalGames(lg)
+		}
+	}
 	if m.active > len(m.games) {
 		m.active = len(m.games)
 	}
@@ -238,6 +247,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			gm.applySnapshot(msg.state)
 		}
 		return m, waitForGameEvent(m.events) // keep listening
+	case moveResultMsg:
+		if gm := m.gameByID(msg.gameID); gm != nil {
+			gm.applyMoveResult(msg.err)
+		}
+		return m, nil
 	case backendConnectedMsg:
 		if msg.err != nil {
 			if gm := m.gameByID(msg.gameID); gm != nil {
