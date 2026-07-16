@@ -24,6 +24,8 @@ type model struct {
 	active      int         // 0 = home tab; 1..n = games[active-1]
 	auth        ogsAuthModel
 	showAuth    bool // modal open, captures all input
+	setup       setupModel
+	showSetup   bool // setup modal open, captures all input
 	ogs         ogsModel
 	authPending bool // stored login present, validating at launch
 
@@ -34,6 +36,7 @@ func newModel() model {
 	m := model{
 		home:   newHomeModel(),
 		auth:   newOGSAuthModel(),
+		setup:  newSetupModel(),
 		events: make(chan gameEvent, 16),
 	}
 	// Restore open tabs; their game models are built once the game list loads.
@@ -250,6 +253,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 		return m, nil
+	case openSetupMsg:
+		m.setup.reset()
+		m.showSetup = true
+		return m, nil
+	case closeSetupMsg:
+		m.showSetup = false
+		return m, nil
+	case localGameCreatedMsg:
+		m.showSetup = false
+		if msg.err != nil {
+			return m, nil // silently drop; MVP has no create-error surface
+		}
+		// Refresh the home list so the new game shows, then open its tab.
+		if lg, err := loadLocalGames(); err == nil {
+			m.home.setLocalGames(lg)
+		}
+		return m, m.openGame(msg.game)
 	case openAuthMsg:
 		m.auth.reset()
 		m.auth.prefillUsername(m.ogs.Username)
@@ -278,6 +298,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.showAuth {
 			var cmd tea.Cmd
 			m.auth, cmd = m.auth.Update(msg)
+			return m, cmd
+		}
+		if m.showSetup {
+			var cmd tea.Cmd
+			m.setup, cmd = m.setup.Update(msg)
 			return m, cmd
 		}
 		// A game's "Go to" prompt captures all input the same way.
@@ -369,6 +394,9 @@ func (m model) View() string {
 	// Modal takes the full screen; tab bar hidden while open.
 	if m.showAuth {
 		return m.auth.View(m.width, m.height)
+	}
+	if m.showSetup {
+		return m.setup.View(m.width, m.height)
 	}
 
 	tabs := m.renderTabs()

@@ -11,6 +11,7 @@ import (
 
 // Menu labels; sign-in hidden once authenticated.
 const signInOption = "Sign in to OGS"
+const hotseatOption = "Play Hotseat"
 const gnuGoOption = "Play vs. GnuGo"
 
 type homeEntryKind int
@@ -75,6 +76,7 @@ func (h *homeModel) rebuild() {
 	if !h.authed && !h.authPending {
 		e = append(e, homeEntry{kind: entryAction, action: signInOption})
 	}
+	e = append(e, homeEntry{kind: entryAction, action: hotseatOption})
 	e = append(e, homeEntry{kind: entryAction, action: gnuGoOption})
 	h.entries = e
 	h.clampCursor()
@@ -179,6 +181,8 @@ func (h homeModel) Update(msg tea.Msg) (homeModel, tea.Cmd) {
 			switch {
 			case e.kind == entryAction && e.action == signInOption:
 				return h, func() tea.Msg { return openAuthMsg{} }
+			case e.kind == entryAction && e.action == hotseatOption:
+				return h, func() tea.Msg { return openSetupMsg{} }
 			case e.kind == entryGame:
 				g := e.game
 				return h, func() tea.Msg { return openGameMsg{game: g} }
