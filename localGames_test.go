@@ -20,7 +20,7 @@ func TestLocalGamePersistence(t *testing.T) {
 	if !ok {
 		t.Fatalf("openLocalGame: not found")
 	}
-	if err := b.Connect(func(boardState) {}); err != nil {
+	if err := b.Connect(func(boardState) {}, nil); err != nil {
 		t.Fatalf("connect: %v", err)
 	}
 	if err := b.SubmitMove(move{x: 2, y: 2, color: black}); err != nil {

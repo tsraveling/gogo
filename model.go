@@ -253,6 +253,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.openGame(msg.game)
 	case gameEvent:
 		if gm := m.gameByID(msg.gameID); gm != nil {
+			if msg.reconnecting {
+				gm.reconnecting = true
+				return m, tea.Batch(gm.spinner.Tick, waitForGameEvent(m.events))
+			}
 			gm.applySnapshot(msg.state)
 		}
 		return m, waitForGameEvent(m.events) // keep listening

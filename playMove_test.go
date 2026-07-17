@@ -12,7 +12,7 @@ func newTestGameModel() (gameModel, *hotseatBackend, *[]boardState) {
 	g := game{id: -1, width: 9, height: 9, you: empty, state: newBoardState(9, 9)}
 	b := newHotseatBackend(g.state, nil)
 	var snaps []boardState
-	_ = b.Connect(func(st boardState) { snaps = append(snaps, st) })
+	_ = b.Connect(func(st boardState) { snaps = append(snaps, st) }, nil)
 	gm := newGameModel(0, g, b)
 	gm.applySnapshot(g.state) // load the grid, clear "connecting"
 	gm.fastMode = false       // most tests exercise the normal ghost flow

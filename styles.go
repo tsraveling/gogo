@@ -50,6 +50,8 @@ var (
 	dimStyle     = lipgloss.NewStyle().Foreground(dimColor)
 	errorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
 	successStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("46"))
+	// Transient reconnect notice while a dropped socket is being redialed.
+	reconnectStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("11"))
 	// Finished-game marker (both players passed). Scoring is separate.
 	gameOverStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("220"))
 

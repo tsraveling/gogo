@@ -21,7 +21,7 @@ func newHotseatBackend(st boardState, prevGrid [][]stoneColor) *hotseatBackend {
 	return &hotseatBackend{state: st, prevGrid: prevGrid}
 }
 
-func (b *hotseatBackend) Connect(emit func(boardState)) error {
+func (b *hotseatBackend) Connect(emit func(boardState), _ func()) error {
 	b.emit = emit
 	emit(b.state) // surface the starting position
 	return nil

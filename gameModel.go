@@ -27,8 +27,9 @@ type gameModel struct {
 	spinner     spinner.Model
 	connecting  bool   // awaiting the first gamedata snapshot
 	connectErr  bool   // the socket failed to connect
-	committing  bool   // a move submission is in flight
-	moveErr     string // last rejected move, shown in the control area
+	committing   bool   // a move submission is in flight
+	reconnecting bool   // submit is redialing a dropped socket
+	moveErr      string // last rejected move, shown in the control area
 	submitOK    bool   // brief ✓ after a confirmed remote submit
 	passConfirm bool   // pass-confirm box is open, capturing input
 	fastMode    bool   // space plays immediately, skipping the ghost step
@@ -77,6 +78,7 @@ func (g *gameModel) applySnapshot(st boardState) {
 	g.game.state = st
 	g.connecting = false
 	g.connectErr = false
+	g.reconnecting = false
 }
 
 // Result of a move submission, routed back to its game tab. The new board
@@ -97,6 +99,7 @@ func submitMoveCmd(b backend, gameID int64, m move) tea.Cmd {
 // retry and surfaces the reason. Remote (OGS) submits flash a brief ✓.
 func (g *gameModel) applyMoveResult(err error) tea.Cmd {
 	g.committing = false
+	g.reconnecting = false
 	if err != nil {
 		g.moveErr = moveErrText(err)
 		return nil
@@ -180,7 +183,7 @@ func (g gameModel) Update(msg tea.Msg) (gameModel, tea.Cmd) {
 		g.submitOK = false
 		return g, nil
 	case spinner.TickMsg:
-		if !g.connecting && !g.committing {
+		if !g.connecting && !g.committing && !g.reconnecting {
 			return g, nil
 		}
 		var cmd tea.Cmd
@@ -380,6 +383,8 @@ func (g gameModel) controlView(w int) string {
 	case g.game.state.finished():
 		return box.Render(lipgloss.JoinVertical(lipgloss.Left,
 			gameOverStyle.Render("⚑ Game over"), dimStyle.Render("(both passed)")))
+	case g.reconnecting:
+		return box.Render(lipgloss.JoinVertical(lipgloss.Left, "", g.spinner.View()+reconnectStyle.Render(" Reconnecting to game…")))
 	case g.committing:
 		return box.Render(lipgloss.JoinVertical(lipgloss.Left, "", g.spinner.View()+dimStyle.Render(" Submitting move…")))
 	case g.submitOK:

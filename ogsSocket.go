@@ -10,6 +10,7 @@ package main
 
 import (
 	"fmt"
+	"time"
 
 	gosocketio "github.com/graarh/golang-socketio"
 	"github.com/graarh/golang-socketio/transport"
@@ -21,6 +22,7 @@ const realtimeURL = "wss://online-go.com/socket.io/?EIO=3&transport=websocket"
 type gameSocket struct {
 	c      *gosocketio.Client
 	gameID int64
+	ready  chan struct{} // closed once OnConnection has emitted authenticate + game/connect
 }
 
 // game/connect subscribe payload.
@@ -65,30 +67,60 @@ type socketAuth struct {
 // board, so they serve purely as "state changed" triggers — the caller fetches
 // the board via fetchBoardState. The caller owns the returned socket and must
 // Disconnect it.
-func connectGame(gameID int64, auth socketAuth, onChange func()) (*gameSocket, error) {
+func connectGame(gameID int64, auth socketAuth, onChange func(), onMove func()) (*gameSocket, error) {
 	c, err := gosocketio.Dial(realtimeURL, transport.GetDefaultWebsocketTransport())
 	if err != nil {
 		return nil, err
 	}
+	s := &gameSocket{c: c, gameID: gameID, ready: make(chan struct{})}
 	// gamedata fires on connect and during scoring/finished; move fires on every
-	// played move (ours and the opponent's). Both are only "state changed"
-	// triggers — the board is refetched in onChange.
+	// played move (ours and the opponent's). Both refetch the board via onChange.
+	// Only move confirms a submission (onMove) — gamedata also fires on connect,
+	// so acking on it would falsely confirm a move that never left the socket.
 	_ = c.On(fmt.Sprintf("game/%d/gamedata", gameID), func(_ any, _ map[string]any) {
 		onChange()
 	})
 	_ = c.On(fmt.Sprintf("game/%d/move", gameID), func(_ any, _ map[string]any) {
 		onChange()
+		onMove()
 	})
 	// Emit only once the socket.io connection is open — emitting before the
 	// handshake completes silently loses the subscription and no data comes.
-	// authenticate first so OGS streams the games we're a party to.
+	// Closing ready lets a submit wait until authenticate + game/connect are
+	// queued, so the FIFO out-queue sends our move only after we're authed.
 	_ = c.On(gosocketio.OnConnection, func(_ any) {
-		if auth.chatAuth != "" {
-			c.Emit("authenticate", &emitAuth{Auth: auth.chatAuth, PlayerID: auth.playerID, Username: auth.username})
-		}
-		c.Emit("game/connect", &emitGameConnect{GameID: gameID, PlayerID: auth.playerID, Chat: false})
+		s.authenticate(auth)
+		close(s.ready)
 	})
-	return &gameSocket{c: c, gameID: gameID}, nil
+	return s, nil
+}
+
+// awaitReady blocks until the socket has completed its OnConnection handshake
+// (authenticate + game/connect queued) or the timeout elapses. Returns true if
+// ready. On an already-connected socket it returns immediately.
+func (s *gameSocket) awaitReady(timeout time.Duration) bool {
+	if s == nil {
+		return false
+	}
+	select {
+	case <-s.ready:
+		return true
+	case <-time.After(timeout):
+		return false
+	}
+}
+
+// authenticate identifies us on the socket (so OGS streams games we're a party
+// to and accepts our moves) and joins the game channel. The chat_auth token is
+// short-lived, so this is re-emitted to refresh a lapsed session (see reauth).
+func (s *gameSocket) authenticate(auth socketAuth) {
+	if s == nil || s.c == nil {
+		return
+	}
+	if auth.chatAuth != "" {
+		s.c.Emit("authenticate", &emitAuth{Auth: auth.chatAuth, PlayerID: auth.playerID, Username: auth.username})
+	}
+	s.c.Emit("game/connect", &emitGameConnect{GameID: s.gameID, PlayerID: auth.playerID, Chat: false})
 }
 
 // submitMove emits a move over the game socket. The authoritative result comes
@@ -99,6 +131,13 @@ func (s *gameSocket) submitMove(playerID int64, m move) error {
 	}
 	s.c.Emit("game/move", &emitMove{GameID: s.gameID, PlayerID: playerID, Move: sgfCoord(m)})
 	return nil
+}
+
+// isAlive reports whether the underlying socket.io connection is still open. A
+// socket dropped while idle (server close / network drop) reports false; the
+// caller must redial rather than re-emit, as a dead socket silently drops emits.
+func (s *gameSocket) isAlive() bool {
+	return s != nil && s.c != nil && s.c.IsAlive()
 }
 
 // Disconnect closes the underlying websocket. Safe on a nil socket.

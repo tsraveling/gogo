@@ -10,10 +10,12 @@ package main
 import tea "github.com/charmbracelet/bubbletea"
 
 // A board snapshot for one game, delivered from the socket goroutine. Routed to
-// the matching gameModel by gameID.
+// the matching gameModel by gameID. When reconnecting is set, it's a phase
+// notice (a dead socket being redialed), not a snapshot — state is unset.
 type gameEvent struct {
-	gameID int64
-	state  boardState
+	gameID       int64
+	state        boardState
+	reconnecting bool
 }
 
 // Blocks on the shared channel, surfacing the next snapshot as a Msg. Update

@@ -10,7 +10,7 @@ func TestHotseatPlay(t *testing.T) {
 	got := 0
 	emit := func(st boardState) { last = st; got++ }
 
-	if err := b.Connect(emit); err != nil {
+	if err := b.Connect(emit, nil); err != nil {
 		t.Fatalf("connect: %v", err)
 	}
 	// Connect emits the starting position: empty board, black to move.
