@@ -52,6 +52,8 @@ var (
 	successStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("46"))
 	// Transient reconnect notice while a dropped socket is being redialed.
 	reconnectStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("11"))
+	// Your-turn marker: yellow ▸ on a game tab, yellow count beside the home icon.
+	turnMarkerStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("11"))
 	// Finished-game marker (both players passed). Scoring is separate.
 	gameOverStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("220"))
 

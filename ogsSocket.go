@@ -10,6 +10,7 @@ package main
 
 import (
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	gosocketio "github.com/graarh/golang-socketio"
@@ -23,6 +24,10 @@ type gameSocket struct {
 	c      *gosocketio.Client
 	gameID int64
 	ready  chan struct{} // closed once OnConnection has emitted authenticate + game/connect
+	// Set by Disconnect before Close so the pending OnDisconnection is recognized
+	// as deliberate (tab switch / close / quit) and doesn't start the reconnect
+	// ladder. A real drop leaves it false.
+	intentional atomic.Bool
 }
 
 // game/connect subscribe payload.
@@ -65,9 +70,10 @@ type socketAuth struct {
 // connectGame opens a socket for one game and calls onChange whenever a gamedata
 // (connect / scoring / finished) or move event fires. Neither carries a rendered
 // board, so they serve purely as "state changed" triggers — the caller fetches
-// the board via fetchBoardState. The caller owns the returned socket and must
-// Disconnect it.
-func connectGame(gameID int64, auth socketAuth, onChange func(), onMove func()) (*gameSocket, error) {
+// the board via fetchBoardState. onDrop fires on an unintentional disconnect (a
+// real network drop), never on a Disconnect() close. The caller owns the returned
+// socket and must Disconnect it.
+func connectGame(gameID int64, auth socketAuth, onChange func(), onMove func(), onDrop func()) (*gameSocket, error) {
 	c, err := gosocketio.Dial(realtimeURL, transport.GetDefaultWebsocketTransport())
 	if err != nil {
 		return nil, err
@@ -91,6 +97,17 @@ func connectGame(gameID int64, auth socketAuth, onChange func(), onMove func()) 
 	_ = c.On(gosocketio.OnConnection, func(_ any) {
 		s.authenticate(auth)
 		close(s.ready)
+	})
+	// A real drop (server close / network loss) fires onDrop so the caller can
+	// start the reconnect ladder. A deliberate Disconnect sets intentional first,
+	// so those closes are ignored here.
+	_ = c.On(gosocketio.OnDisconnection, func(_ any) {
+		if s.intentional.Load() {
+			return
+		}
+		if onDrop != nil {
+			onDrop()
+		}
 	})
 	return s, nil
 }
@@ -140,9 +157,12 @@ func (s *gameSocket) isAlive() bool {
 	return s != nil && s.c != nil && s.c.IsAlive()
 }
 
-// Disconnect closes the underlying websocket. Safe on a nil socket.
+// Disconnect closes the underlying websocket, flagging the close as deliberate so
+// the resulting OnDisconnection doesn't trip the reconnect ladder. Safe on a nil
+// socket.
 func (s *gameSocket) Disconnect() {
 	if s != nil && s.c != nil {
+		s.intentional.Store(true)
 		s.c.Close()
 	}
 }

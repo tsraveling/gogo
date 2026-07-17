@@ -46,6 +46,7 @@ type homeModel struct {
 	authed      bool
 	authPending bool   // validating a stored login; sign-in stays hidden
 	username    string // OGS login shown in the status bar
+	sessionExpired bool // auth died mid-session; red banner until next sign-in
 }
 
 func newHomeModel() homeModel {
@@ -141,6 +142,9 @@ func (h *homeModel) startLoading() tea.Cmd {
 // setAuthed updates auth state (and the status-bar login) and refreshes the menu.
 func (h *homeModel) setAuthed(authed bool, username string) {
 	h.username = username
+	if authed {
+		h.sessionExpired = false // a fresh login clears the expiry banner
+	}
 	if h.authed == authed {
 		return
 	}
@@ -230,6 +234,8 @@ func (h homeModel) View(w, hgt int) string {
 // Login status bar: validating, or logged-in with refresh/logout hints.
 func (h homeModel) statusBar(w int) string {
 	switch {
+	case h.sessionExpired:
+		return errorStyle.Width(w).Align(lipgloss.Center).Bold(true).Render("Session expired — sign in again")
 	case h.authPending:
 		return dimStyle.Width(w).Align(lipgloss.Center).Render("Logging in …")
 	case h.authed:

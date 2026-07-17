@@ -27,6 +27,10 @@ func (b *hotseatBackend) Connect(emit func(boardState), _ func()) error {
 	return nil
 }
 
+// No socket to lose — always reported alive so the focus/reconnect machinery
+// (OGS-only) never tries to redial a hotseat game.
+func (b *hotseatBackend) isAlive() bool { return true }
+
 // Validates and applies m locally, flips the turn, and emits the new state. A
 // rejected move (illegal/occupied/suicide/ko) leaves state untouched and returns
 // the error for the UI to surface.

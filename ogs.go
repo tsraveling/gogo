@@ -31,6 +31,9 @@ var httpClient = &http.Client{}
 // Rejected refresh token (stale login).
 var errInvalidRefresh = errors.New("invalid refresh token")
 
+// A Bearer request came back 401 — the access token is no longer valid.
+var errUnauthorized = errors.New("ogs unauthorized")
+
 // OGS /oauth2/token/ payload.
 type oauthResponse struct {
 	AccessToken      string `json:"access_token"`
@@ -208,6 +211,9 @@ func authGet(rawURL, accessToken string, out any) error {
 		return err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized {
+		return errUnauthorized
+	}
 	if resp.StatusCode != http.StatusOK {
 		return errors.New("ogs request failed: " + resp.Status)
 	}

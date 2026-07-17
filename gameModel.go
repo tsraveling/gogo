@@ -28,7 +28,10 @@ type gameModel struct {
 	connecting  bool   // awaiting the first gamedata snapshot
 	connectErr  bool   // the socket failed to connect
 	committing   bool   // a move submission is in flight
-	reconnecting bool   // submit is redialing a dropped socket
+	reconnecting bool   // yellow: the reconnect ladder is running (OGS only)
+	disconnected bool   // red: the ladder gave up; manual retry only (OGS only)
+	reconnectRung int   // current rung of the reconnect ladder
+	reconnectGen  int   // bumped to invalidate in-flight ladder ticks/results
 	moveErr      string // last rejected move, shown in the control area
 	submitOK    bool   // brief ✓ after a confirmed remote submit
 	passConfirm bool   // pass-confirm box is open, capturing input
@@ -72,13 +75,39 @@ func (g *gameModel) beginConnect() tea.Cmd {
 	return g.spinner.Tick
 }
 
-// Applies a live snapshot: feeds the board and updates turn/phase state.
+// Applies a live snapshot: feeds the board and updates turn/phase state. A
+// snapshot means the socket is healthy, so it clears every connect/reconnect
+// state and invalidates any pending ladder ticks.
 func (g *gameModel) applySnapshot(st boardState) {
 	g.board.setState(st.grid)
 	g.game.state = st
 	g.connecting = false
 	g.connectErr = false
 	g.reconnecting = false
+	g.disconnected = false
+	g.reconnectGen++
+	g.reconnectRung = 0
+}
+
+// cancelReconnect stops any running ladder and clears the reconnect/give-up
+// states — called when a tab is blurred or closed (an intentional disconnect).
+func (g *gameModel) cancelReconnect() {
+	g.reconnectGen++
+	g.reconnecting = false
+	g.disconnected = false
+	g.reconnectRung = 0
+}
+
+// playBlockReason returns a non-empty message when the socket state forbids
+// playing (OGS reconnecting/given-up); empty when a move may proceed.
+func (g gameModel) playBlockReason() string {
+	if g.disconnected {
+		return "reconnect to play"
+	}
+	if g.reconnecting {
+		return "Reconnecting…"
+	}
+	return ""
 }
 
 // Result of a move submission, routed back to its game tab. The new board
@@ -218,6 +247,10 @@ func (g gameModel) Update(msg tea.Msg) (gameModel, tea.Cmd) {
 		case "enter":
 			return g.commitMove()
 		case "p":
+			if reason := g.playBlockReason(); reason != "" {
+				g.moveErr = reason
+				return g, nil
+			}
 			if g.canPlay() {
 				g.passConfirm = true
 			}
@@ -298,7 +331,12 @@ func (g gameModel) commitMove() (gameModel, tea.Cmd) {
 }
 
 // Submits a stone at a point. No-op on a read-only board or an occupied point.
+// A blocked socket state surfaces the reason instead of playing.
 func (g gameModel) submitAt(x, y int) (gameModel, tea.Cmd) {
+	if reason := g.playBlockReason(); reason != "" {
+		g.moveErr = reason
+		return g, nil
+	}
 	if !g.canPlay() || g.board.stoneAt(x, y) != empty {
 		return g, nil
 	}
@@ -313,6 +351,10 @@ func (g gameModel) updatePassConfirm(msg tea.KeyMsg) (gameModel, tea.Cmd) {
 	switch msg.String() {
 	case "enter":
 		g.passConfirm = false
+		if reason := g.playBlockReason(); reason != "" {
+			g.moveErr = reason
+			return g, nil
+		}
 		m := move{x: -1, y: -1, color: g.placingColor()}
 		g.committing = true
 		g.moveErr = ""
@@ -383,8 +425,11 @@ func (g gameModel) controlView(w int) string {
 	case g.game.state.finished():
 		return box.Render(lipgloss.JoinVertical(lipgloss.Left,
 			gameOverStyle.Render("⚑ Game over"), dimStyle.Render("(both passed)")))
+	case g.disconnected:
+		return box.Render(lipgloss.JoinVertical(lipgloss.Left,
+			errorStyle.Render("Disconnected"), dimStyle.Render("r to reconnect")))
 	case g.reconnecting:
-		return box.Render(lipgloss.JoinVertical(lipgloss.Left, "", g.spinner.View()+reconnectStyle.Render(" Reconnecting to game…")))
+		return box.Render(lipgloss.JoinVertical(lipgloss.Left, "", g.spinner.View()+reconnectStyle.Render(" Reconnecting…")))
 	case g.committing:
 		return box.Render(lipgloss.JoinVertical(lipgloss.Left, "", g.spinner.View()+dimStyle.Render(" Submitting move…")))
 	case g.submitOK:

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -28,6 +29,7 @@ type model struct {
 	showSetup   bool // setup modal open, captures all input
 	ogs         ogsModel
 	authPending bool // stored login present, validating at launch
+	polling     bool // the 20s overview poll loop is running
 
 	events chan gameEvent // backend snapshots, drained by waitForGameEvent
 }
@@ -60,12 +62,11 @@ func newModel() model {
 // @region tabs:manage
 
 // Switches to the game's tab, opening (and persisting) a new one if needed.
-// Returns a cmd that connects the new tab's backend (nil when already open).
+// Single live socket: focusing a tab dials it, leaving one disconnects it.
 func (m *model) openGame(g game) tea.Cmd {
 	for i, t := range m.tabs {
 		if t.GameID == g.id {
-			m.active = i + 1
-			return nil
+			return m.switchTo(i + 1) // already open: focus it (redials if its socket dropped)
 		}
 	}
 	// Local games (negative id) reload from disk — the saved position is
@@ -81,6 +82,7 @@ func (m *model) openGame(g game) tea.Cmd {
 	} else {
 		b = &ogsBackend{gameID: g.id, whiteID: g.white.id, ogs: m.ogs}
 	}
+	m.blurActive() // disconnect the tab we're leaving before focusing the new one
 	m.tabs = append(m.tabs, tabRef{Source: source, GameID: g.id})
 	gm := newGameModel(len(m.games), g, b)
 	spin := gm.beginConnect()
@@ -90,11 +92,48 @@ func (m *model) openGame(g game) tea.Cmd {
 	return tea.Batch(connectBackendCmd(b, g.id, m.events), spin)
 }
 
+// switchTo moves focus to tab index next (0 = home), tearing down the socket of
+// the tab being left and dialing the one being entered if its socket dropped.
+func (m *model) switchTo(next int) tea.Cmd {
+	if next == m.active {
+		return nil
+	}
+	m.blurActive()
+	m.active = next
+	return m.connectActive()
+}
+
+// blurActive disconnects the focused OGS socket (an intentional close) and
+// cancels any reconnect ladder. Local backends are unaffected.
+func (m *model) blurActive() {
+	if m.active > 0 && m.active-1 < len(m.games) {
+		gm := &m.games[m.active-1]
+		gm.cancelReconnect()
+		gm.backend.Disconnect()
+	}
+}
+
+// connectActive dials the focused tab's backend if its socket isn't alive. A
+// failed OGS dial enters the reconnect ladder (handled in backendConnectedMsg).
+// No-op on home or an already-live/local backend.
+func (m *model) connectActive() tea.Cmd {
+	if m.active == 0 || m.active-1 >= len(m.games) {
+		return nil
+	}
+	gm := &m.games[m.active-1]
+	if gm.backend.isAlive() {
+		return nil
+	}
+	spin := gm.beginConnect()
+	return tea.Batch(spin, connectBackendCmd(gm.backend, gm.game.id, m.events))
+}
+
 // Closes the game tab at games-index i (active-1), reindexing the rest. A
 // finished local game is deleted outright (no scoring/archive yet).
 func (m *model) closeTab(i int) {
 	ref := m.tabs[i]
 	finished := m.games[i].game.state.finished()
+	m.games[i].cancelReconnect()
 	m.games[i].backend.Disconnect()
 	m.games = append(m.games[:i], m.games[i+1:]...)
 	m.tabs = append(m.tabs[:i], m.tabs[i+1:]...)
@@ -126,9 +165,11 @@ func (m *model) gameByID(id int64) *gameModel {
 	return nil
 }
 
-// Rebuilds game models for restored tabs once the game list is known, connecting
-// each tab's backend (per-tab lifetime). Drops tabs whose game is no longer
-// active. No-op once tabs are already open. Returns a cmd that dials the backends.
+// Rebuilds game models for restored tabs once the game list is known. Launch
+// lands on home and dials nothing (single live socket): OGS tabs connect only
+// when focused. Local backends have no socket, so they're connected here (their
+// Connect just emits the in-memory position, wiring the submit path). Drops tabs
+// whose game is no longer active. No-op once tabs are already open.
 func (m *model) restoreTabs(games []game) tea.Cmd {
 	if len(m.games) > 0 {
 		return nil
@@ -157,7 +198,9 @@ func (m *model) restoreTabs(games []game) tea.Cmd {
 		}
 		kept = append(kept, t)
 		gm := newGameModel(len(m.games), g, b)
-		cmds = append(cmds, gm.beginConnect(), connectBackendCmd(b, g.id, m.events))
+		if t.Source == "local" {
+			cmds = append(cmds, connectBackendCmd(b, g.id, m.events))
+		}
 		m.games = append(m.games, gm)
 	}
 	m.tabs = kept
@@ -170,13 +213,84 @@ func (m model) tabCount() int {
 	return len(m.games) + 1
 }
 
-// Refreshes the OGS game list when the home tab is focused and authenticated.
-// Called on every navigation back to home so the list stays current.
-func (m *model) refreshIfHome() tea.Cmd {
-	if m.active != 0 || !m.ogs.authenticated() {
+// startPoll begins the always-on 20s overview poll, once. Idempotent so repeated
+// logins don't stack tick loops.
+func (m *model) startPoll() tea.Cmd {
+	if m.polling {
 		return nil
 	}
-	return tea.Batch(fetchGamesCmd(m.ogs), m.home.startLoading())
+	m.polling = true
+	return pollTickCmd()
+}
+
+// applyPolledGames refreshes the home list and each open OGS tab's turn/phase from
+// a poll. The active board keeps its socket-fed grid; only the "whose turn" meta
+// is updated (the poll carries no board).
+func (m *model) applyPolledGames(games []game) {
+	m.home.setGames(games)
+	byID := make(map[int64]game, len(games))
+	for _, g := range games {
+		byID[g.id] = g
+	}
+	for i := range m.games {
+		gm := &m.games[i]
+		if gm.game.id <= 0 {
+			continue // local
+		}
+		if pg, ok := byID[gm.game.id]; ok {
+			gm.game.you = pg.you
+			gm.game.state.playerToMove = pg.state.playerToMove
+			gm.game.state.phase = pg.state.phase
+		}
+	}
+}
+
+// hiddenTurnCount is the number of your-turn OGS games not open as a tab — shown
+// as a yellow count beside the home icon.
+func (m *model) hiddenTurnCount() int {
+	open := make(map[int64]bool, len(m.games))
+	for i := range m.games {
+		open[m.games[i].game.id] = true
+	}
+	n := 0
+	for _, g := range m.home.games {
+		if g.yourTurn() && !open[g.id] {
+			n++
+		}
+	}
+	return n
+}
+
+// authKilled handles a dead session (a reconnect's errSessionExpired, or a poll
+// 401 whose refresh failed): prune OGS tabs, keep local, land on home with a red
+// banner, and clear the stored token so next launch doesn't retry a dead session.
+func (m *model) authKilled() tea.Cmd {
+	var keptGames []gameModel
+	var keptTabs []tabRef
+	for i := range m.games {
+		if m.tabs[i].Source == "local" {
+			keptGames = append(keptGames, m.games[i])
+			keptTabs = append(keptTabs, m.tabs[i])
+			continue
+		}
+		m.games[i].cancelReconnect()
+		m.games[i].backend.Disconnect()
+	}
+	m.games = keptGames
+	m.tabs = keptTabs
+	for j := range m.games {
+		m.games[j].idx = j
+	}
+	_ = saveTabs(m.tabs)
+	m.active = 0
+	_ = m.ogs.clear()
+	m.ogs = ogsModel{}
+	m.home.setGames(nil)
+	m.home.setAuthed(false, "")
+	m.home.sessionExpired = true
+	// Leave m.polling set: the next (now unauthenticated) tick stops the loop and
+	// clears the flag. Clearing it here could race a re-login into two loops.
+	return nil
 }
 
 // Result of validating persisted auth at launch.
@@ -242,7 +356,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.ok {
 			m.ogs = msg.ogs
 			m.home.setAuthed(true, m.ogs.Username)
-			return m, tea.Batch(fetchGamesCmd(m.ogs), m.home.startLoading())
+			return m, tea.Batch(fetchGamesCmd(m.ogs), m.home.startLoading(), m.startPoll())
 		}
 		// Logged out / no stored auth: still restore local (hotseat) tabs.
 		return m, m.restoreTabs(nil)
@@ -252,11 +366,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case openGameMsg:
 		return m, m.openGame(msg.game)
 	case gameEvent:
-		if gm := m.gameByID(msg.gameID); gm != nil {
-			if msg.reconnecting {
-				gm.reconnecting = true
-				return m, tea.Batch(gm.spinner.Tick, waitForGameEvent(m.events))
+		if msg.dropped {
+			// Only the focused tab holds a socket, so only its drop starts the
+			// ladder; a stale drop for a since-blurred tab is ignored.
+			if m.active > 0 && m.games[m.active-1].game.id == msg.gameID {
+				return m, tea.Batch(m.startReconnect(&m.games[m.active-1]), waitForGameEvent(m.events))
 			}
+			return m, waitForGameEvent(m.events)
+		}
+		if gm := m.gameByID(msg.gameID); gm != nil {
 			gm.applySnapshot(msg.state)
 		}
 		return m, waitForGameEvent(m.events) // keep listening
@@ -269,9 +387,70 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			if gm := m.gameByID(msg.gameID); gm != nil {
 				gm.connecting = false
+				// A failed OGS switch-in dial enters the reconnect ladder; local
+				// backends don't fail, so a rare local error just shows connectErr.
+				if _, ok := gm.backend.(*ogsBackend); ok {
+					return m, m.startReconnect(gm)
+				}
 				gm.connectErr = true
 			}
 		}
+		return m, nil
+	case reconnectTickMsg:
+		gm := m.gameByID(msg.gameID)
+		if gm == nil || msg.gen != gm.reconnectGen || !gm.reconnecting {
+			return m, nil // tab closed, ladder canceled, or already recovered
+		}
+		return m, reconnectAttemptCmd(gm.backend, msg.gameID, msg.rung, msg.gen)
+	case reconnectResultMsg:
+		gm := m.gameByID(msg.gameID)
+		if gm == nil || msg.gen != gm.reconnectGen {
+			return m, nil // stale attempt
+		}
+		if msg.err == errSessionExpired {
+			return m, m.authKilled()
+		}
+		if msg.err == nil {
+			// Success: the emitted snapshot clears the reconnecting state; clear
+			// here too in case this result lands before it.
+			gm.reconnecting = false
+			gm.disconnected = false
+			gm.reconnectRung = 0
+			return m, nil
+		}
+		next := msg.rung + 1
+		if msg.rung < 0 || next >= len(reconnectDelays) {
+			gm.reconnecting = false // manual attempt failed, or the ladder is exhausted
+			gm.disconnected = true
+			return m, nil
+		}
+		gm.reconnectRung = next
+		return m, scheduleReconnect(msg.gameID, next, gm.reconnectGen)
+	case pollTickMsg:
+		if !m.ogs.authenticated() {
+			m.polling = false // logged out / session killed: stop the loop
+			return m, nil
+		}
+		if m.showAuth {
+			return m, pollTickCmd() // paused while the login modal is open
+		}
+		return m, tea.Batch(pollGamesCmd(m.ogs), pollTickCmd())
+	case pollResultMsg:
+		if msg.authDead {
+			return m, m.authKilled()
+		}
+		if msg.ogs != nil {
+			m.ogs = *msg.ogs // adopt refreshed tokens
+			for i := range m.games {
+				if ob, ok := m.games[i].backend.(*ogsBackend); ok {
+					ob.setAuth(m.ogs)
+				}
+			}
+		}
+		if msg.err != nil {
+			return m, nil // transient; the next tick retries
+		}
+		m.applyPolledGames(msg.games)
 		return m, nil
 	case navErrorExpiredMsg:
 		if msg.game >= 0 && msg.game < len(m.games) {
@@ -324,7 +503,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.ogs = msg.ogs
 			_ = m.ogs.save()
 			m.home.setAuthed(true, m.ogs.Username)
-			return m, tea.Batch(cmd, fetchGamesCmd(m.ogs), m.home.startLoading())
+			return m, tea.Batch(cmd, fetchGamesCmd(m.ogs), m.home.startLoading(), m.startPoll())
 		}
 		return m, cmd
 	case tea.KeyMsg:
@@ -353,14 +532,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.home.setAuthed(false, "")
 			return m, nil
 		}
-		// X closes the focused game tab (home tab can't close).
+		// X closes the focused game tab (home tab can't close). We then connect
+		// whatever tab we land on (single live socket).
 		if msg.String() == "X" && m.active > 0 {
 			m.closeTab(m.active - 1)
-			return m, m.refreshIfHome() // refresh if we landed back on home
+			return m, m.connectActive()
 		}
-		// r refetches the game list when authenticated.
-		if msg.String() == "r" && m.ogs.authenticated() {
-			return m, tea.Batch(fetchGamesCmd(m.ogs), m.home.startLoading())
+		// r: on a given-up game tab, retry the connection once; on home, refetch
+		// the game list. Otherwise falls through to the active tab.
+		if msg.String() == "r" {
+			if m.active > 0 {
+				if gm := &m.games[m.active-1]; gm.disconnected {
+					return m, m.manualReconnect(gm)
+				}
+			} else if m.ogs.authenticated() {
+				return m, tea.Batch(fetchGamesCmd(m.ogs), m.home.startLoading())
+			}
 		}
 		switch msg.String() {
 		case "q", "ctrl+c", "esc":
@@ -369,11 +556,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, tea.Quit
 		case "tab", "]":
-			m.active = (m.active + 1) % m.tabCount()
-			return m, m.refreshIfHome()
+			return m, m.switchTo((m.active + 1) % m.tabCount())
 		case "shift+tab", "[":
-			m.active = (m.active - 1 + m.tabCount()) % m.tabCount()
-			return m, m.refreshIfHome()
+			return m, m.switchTo((m.active - 1 + m.tabCount()) % m.tabCount())
 		}
 		// Delegate remaining keys to the active tab.
 		var cmd tea.Cmd
@@ -399,23 +584,36 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// Top tab bar: home tab first, then one per game.
+// Top tab bar: home tab first, then one per game. A yellow ▸ prefixes a game
+// tab when it's your turn; a yellow count beside the home icon counts your-turn
+// games not open as tabs.
 func (m model) renderTabs() string {
-	labels := make([]string, 0, m.tabCount())
-	labels = append(labels, homeIcon)
-	for _, g := range m.games {
-		labels = append(labels, g.game.name)
+	homeStyle := tabStyle
+	if m.active == 0 {
+		homeStyle = activeTabStyle
 	}
-
-	tabs := make([]string, len(labels))
-	for i, label := range labels {
-		if i == m.active {
-			tabs[i] = activeTabStyle.Render(label)
-		} else {
-			tabs[i] = tabStyle.Render(label)
+	cells := []string{homeStyle.Render(homeIcon)}
+	if n := m.hiddenTurnCount(); n > 0 {
+		cells = append(cells, turnMarkerStyle.Render(fmt.Sprintf(" %d", n)))
+	}
+	for i := range m.games {
+		g := &m.games[i]
+		style := tabStyle
+		if m.active == i+1 {
+			style = activeTabStyle
 		}
+		if g.game.yourTurn() {
+			// Split the tab padding so the yellow ▸ abuts the name with nothing
+			// between them: arrow takes the left pad, name keeps the right pad.
+			arrow := style.PaddingRight(0).Bold(true).Foreground(lipgloss.Color("11"))
+			name := style.PaddingLeft(0)
+			cells = append(cells, lipgloss.JoinHorizontal(lipgloss.Top,
+				arrow.Render("▸"), name.Render(g.game.name)))
+			continue
+		}
+		cells = append(cells, style.Render(g.game.name))
 	}
-	return lipgloss.JoinHorizontal(lipgloss.Top, tabs...)
+	return lipgloss.JoinHorizontal(lipgloss.Top, cells...)
 }
 
 // @region tabs:render
