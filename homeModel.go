@@ -197,38 +197,63 @@ func (h homeModel) Update(msg tea.Msg) (homeModel, tea.Cmd) {
 }
 
 func (h homeModel) View(w, hgt int) string {
-	var rows []string
-	for i, e := range h.entries {
-		selected := i == h.cursor
-		switch e.kind {
-		case entryGame:
-			if i > 0 && h.entries[i-1].kind == entryGame {
-				rows = append(rows, "") // blank line between games
-			}
-			rows = append(rows, renderGameEntry(e.game, selected))
-		case entryAction:
-			rows = append(rows, renderActionEntry(e.action, selected))
-		case entrySpacer:
-			rows = append(rows, "")
-		case entryLoading:
-			rows = append(rows, gutter(h.spinner.View()+gameMetaStyle.Render(" Loading games…"), false))
-		}
-	}
-	// Fixed 8-col left margin, vertically centered — avoids horizontal jitter
-	// as row widths change (loading → games).
-	menu := lipgloss.NewStyle().MarginLeft(8).Render(lipgloss.JoinVertical(lipgloss.Left, rows...))
-
 	// Bottom status bar: login state. Home-only, so game tabs keep full height.
 	status := h.statusBar(w)
 	bodyH := hgt
 	if status != "" {
 		bodyH -= lipgloss.Height(status)
 	}
+
+	// Render each entry to its lines, tracking where the selected entry sits so
+	// the list can scroll to keep it visible when it outgrows the screen.
+	var lines []string
+	selStart, selCount := 0, 1
+	for i, e := range h.entries {
+		if e.kind == entryGame && i > 0 && h.entries[i-1].kind == entryGame {
+			lines = append(lines, "") // blank line between games
+		}
+		start := len(lines)
+		switch e.kind {
+		case entryGame:
+			lines = append(lines, strings.Split(renderGameEntry(e.game, i == h.cursor), "\n")...)
+		case entryAction:
+			lines = append(lines, renderActionEntry(e.action, i == h.cursor))
+		case entrySpacer:
+			lines = append(lines, "")
+		case entryLoading:
+			lines = append(lines, gutter(h.spinner.View()+gameMetaStyle.Render(" Loading games…"), false))
+		}
+		if i == h.cursor {
+			selStart, selCount = start, len(lines)-start
+		}
+	}
+	lines = windowLines(lines, selStart, selCount, bodyH)
+
+	// Fixed 8-col left margin, vertically centered — avoids horizontal jitter
+	// as row widths change (loading → games).
+	menu := lipgloss.NewStyle().MarginLeft(8).Render(lipgloss.JoinVertical(lipgloss.Left, lines...))
 	body := lipgloss.Place(w, bodyH, lipgloss.Left, lipgloss.Center, menu)
 	if status != "" {
 		return lipgloss.JoinVertical(lipgloss.Left, body, status)
 	}
 	return body
+}
+
+// windowLines clips lines to height h, scrolling so the selected entry (the span
+// [selStart, selStart+selCount)) stays visible and roughly centered. Returns the
+// lines unchanged when they already fit.
+func windowLines(lines []string, selStart, selCount, h int) []string {
+	if h <= 0 || len(lines) <= h {
+		return lines
+	}
+	top := selStart + selCount/2 - h/2 // center the cursor's entry
+	if max := len(lines) - h; top > max {
+		top = max
+	}
+	if top < 0 {
+		top = 0
+	}
+	return lines[top : top+h]
 }
 
 // Login status bar: validating, or logged-in with refresh/logout hints.

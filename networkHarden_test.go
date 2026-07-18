@@ -96,3 +96,38 @@ func TestHiddenTurnCount(t *testing.T) {
 		t.Errorf("expected 1 hidden your-turn game (id 2), got %d", n)
 	}
 }
+
+// windowLines keeps the selected entry visible and centered when the list
+// overflows, and returns the list unchanged when it fits.
+func TestWindowLines(t *testing.T) {
+	lines := make([]string, 20)
+	for i := range lines {
+		lines[i] = string(rune('a' + i))
+	}
+	// Fits: unchanged.
+	if got := windowLines(lines[:5], 0, 1, 10); len(got) != 5 {
+		t.Errorf("fitting list should be unchanged, got %d lines", len(got))
+	}
+	// Overflow near top: window starts at 0, selected line present.
+	w := windowLines(lines, 0, 1, 10)
+	if len(w) != 10 || w[0] != "a" {
+		t.Errorf("top selection should anchor window at start")
+	}
+	// Overflow near bottom: window ends at last line, selected line present.
+	w = windowLines(lines, 19, 1, 10)
+	if len(w) != 10 || w[len(w)-1] != lines[19] {
+		t.Errorf("bottom selection should anchor window at end")
+	}
+	// Overflow in middle: selected entry stays within the window.
+	selStart := 12
+	w = windowLines(lines, selStart, 2, 10)
+	found := false
+	for _, l := range w {
+		if l == lines[selStart] {
+			found = true
+		}
+	}
+	if len(w) != 10 || !found {
+		t.Errorf("mid selection should remain visible in the window")
+	}
+}
