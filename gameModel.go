@@ -201,7 +201,7 @@ func navErrorCmd(idx int) tea.Cmd {
 // True while a modal-like prompt should swallow keys (tabs/quit disabled).
 func (g gameModel) capturingInput() bool { return g.navMode || g.passConfirm }
 
-// @region board:navigation
+// @region game:input
 
 func (g gameModel) Update(msg tea.Msg) (gameModel, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -365,7 +365,7 @@ func (g gameModel) updatePassConfirm(msg tea.KeyMsg) (gameModel, tea.Cmd) {
 	return g, nil
 }
 
-// @region board:view-model
+// @region game:view
 
 func (g gameModel) View(termW, termH int) string {
 	boardW := g.board.renderWidth()

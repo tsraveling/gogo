@@ -89,7 +89,7 @@ func clamp(v, lo, hi int) int {
 	return v
 }
 
-// @region board:view-model
+// @region board:render
 
 // Digits needed for the row numbers (1..height).
 func (b boardModel) numW() int { return len(strconv.Itoa(b.height)) }
