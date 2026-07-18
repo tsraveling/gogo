@@ -18,10 +18,17 @@ type backend interface {
 	// Starts streaming; emits the initial state and every state change after.
 	// Blocking network work runs inside a tea.Cmd (connectBackendCmd). onDrop
 	// fires on an unintentional socket drop (OGS only); local backends ignore it.
-	Connect(emit func(boardState), onDrop func()) error
+	// emitChat delivers incoming chat lines (OGS only); local backends ignore it.
+	Connect(emit func(boardState), onDrop func(), emitChat func(chatMessage)) error
 	// Submits a move (a pass is a move with isPass()); the resulting state
 	// arrives via emit. A non-nil error means the move was rejected.
 	SubmitMove(m move) error
+	// Sends a chat line. Delivered back via emitChat with a server chat_id.
+	// Backends without chat (hotseat/gnugo) return errSubmitUnsupported.
+	SendChat(m chatMessage) error
+	// Reports whether this backend has a chat channel (OGS). Drives whether the
+	// composer is enabled in the meta column.
+	SupportsChat() bool
 	// Reports whether SubmitMove applies synchronously (no submit spinner/✓).
 	// True for local backends (hotseat/gnugo), false for OGS.
 	Instant() bool
@@ -60,7 +67,8 @@ func connectBackendCmd(b backend, gameID int64, ch chan<- gameEvent) tea.Cmd {
 	return func() tea.Msg {
 		emit := func(st boardState) { ch <- gameEvent{gameID: gameID, state: st} }
 		onDrop := func() { ch <- gameEvent{gameID: gameID, dropped: true} }
-		return backendConnectedMsg{gameID: gameID, err: b.Connect(emit, onDrop)}
+		emitChat := func(m chatMessage) { ch <- gameEvent{gameID: gameID, chat: &m} }
+		return backendConnectedMsg{gameID: gameID, err: b.Connect(emit, onDrop, emitChat)}
 	}
 }
 
@@ -73,30 +81,39 @@ type ogsBackend struct {
 	gameID  int64
 	whiteID int64 // maps player_to_move to a side
 	ogs     ogsModel
-	socket  *gameSocket
-	emit    func(boardState) // set by Connect; reused on redial
-	onDrop  func()           // set by Connect; fires on an unintentional drop
+	socket   *gameSocket
+	emit     func(boardState)   // set by Connect; reused on redial
+	onDrop   func()             // set by Connect; fires on an unintentional drop
+	emitChat func(chatMessage)  // set by Connect; delivers incoming chat lines
 
 	mu    sync.Mutex
 	ackCh chan error // set while a SubmitMove awaits the server's broadcast
 	moves []move     // ordered history from gamedata/move events (mu-guarded)
 }
 
-func (b *ogsBackend) Connect(emit func(boardState), onDrop func()) error {
+func (b *ogsBackend) Connect(emit func(boardState), onDrop func(), emitChat func(chatMessage)) error {
 	b.emit = emit
 	b.onDrop = onDrop
+	b.emitChat = emitChat
 	return b.dial()
 }
 
-// dial opens the game socket, wiring the state-change/drop handlers.
+// dial opens the game socket, wiring the state-change/chat/drop handlers.
 func (b *ogsBackend) dial() error {
 	auth, _ := b.buildAuth() // best-effort; empty chat_auth = unauthenticated read
-	s, err := connectGame(b.gameID, auth, b.onGamedata, b.onMove, b.onDrop)
+	s, err := connectGame(b.gameID, auth, b.onGamedata, b.onMove, b.onChat, b.onDrop)
 	if err != nil {
 		return err
 	}
 	b.socket = s
 	return nil
+}
+
+// onChat forwards an incoming chat line to the tea loop (deduped there).
+func (b *ogsBackend) onChat(m chatMessage) {
+	if b.emitChat != nil {
+		b.emitChat(m)
+	}
 }
 
 // onGamedata adopts the authoritative move list (connect/scoring) and refreshes.
@@ -161,7 +178,7 @@ func (b *ogsBackend) reconnect() error {
 			return errSessionExpired
 		}
 	}
-	s, err := connectGame(b.gameID, auth, b.onGamedata, b.onMove, b.onDrop)
+	s, err := connectGame(b.gameID, auth, b.onGamedata, b.onMove, b.onChat, b.onDrop)
 	if err != nil {
 		return err
 	}
@@ -277,6 +294,15 @@ func (b *ogsBackend) clearAck() {
 	b.ackCh = nil
 	b.mu.Unlock()
 }
+
+// SendChat emits a chat line over the socket. The authoritative line (with its
+// chat_id) returns via the game/<id>/chat handler → emitChat.
+func (b *ogsBackend) SendChat(m chatMessage) error {
+	b.socket.awaitReady(ogsMoveTimeout)
+	return b.socket.sendChat(m)
+}
+
+func (b *ogsBackend) SupportsChat() bool { return true }
 
 func (b *ogsBackend) Instant() bool { return false }
 

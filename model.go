@@ -85,6 +85,7 @@ func (m *model) openGame(g game) tea.Cmd {
 	m.blurActive() // disconnect the tab we're leaving before focusing the new one
 	m.tabs = append(m.tabs, tabRef{Source: source, GameID: g.id})
 	gm := newGameModel(len(m.games), g, b)
+	gm.setSize(m.width, m.height)
 	spin := gm.beginConnect()
 	m.games = append(m.games, gm)
 	_ = saveTabs(m.tabs)
@@ -198,6 +199,7 @@ func (m *model) restoreTabs(games []game) tea.Cmd {
 		}
 		kept = append(kept, t)
 		gm := newGameModel(len(m.games), g, b)
+		gm.setSize(m.width, m.height)
 		if t.Source == "local" {
 			cmds = append(cmds, connectBackendCmd(b, g.id, m.events))
 		}
@@ -355,6 +357,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		for i := range m.games {
+			m.games[i].setSize(m.width, m.height) // re-lay each tab's chat
+		}
 	case authLoadedMsg:
 		m.authPending = false
 		m.home.setAuthPending(false)
@@ -393,6 +398,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, waitForGameEvent(m.events)
 		}
+		if msg.chat != nil {
+			if gm := m.gameByID(msg.gameID); gm != nil {
+				gm.addChat(*msg.chat)
+			}
+			return m, waitForGameEvent(m.events)
+		}
 		if gm := m.gameByID(msg.gameID); gm != nil {
 			gm.applySnapshot(msg.state)
 		}
@@ -401,6 +412,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if gm := m.gameByID(msg.gameID); gm != nil {
 			return m, gm.applyMoveResult(msg.err)
 		}
+		return m, nil
+	case chatSentMsg:
+		// The optimistic line is already shown; the server echo confirms it.
+		// Errors are non-fatal for now (see gameModel.chatSentMsg).
 		return m, nil
 	case backendConnectedMsg:
 		if msg.err != nil {

@@ -92,7 +92,7 @@ func TestHotseatTrailEndToEnd(t *testing.T) {
 	g := game{id: -1, width: 9, height: 9, you: empty, state: newBoardState(9, 9)}
 	b := newHotseatBackend(g.state, nil)
 	var last boardState
-	_ = b.Connect(func(st boardState) { last = st }, nil)
+	_ = b.Connect(func(st boardState) { last = st }, nil, nil)
 	gm := newGameModel(0, g, b)
 
 	if err := b.SubmitMove(move{x: 4, y: 4, color: black}); err != nil {

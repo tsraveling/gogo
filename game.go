@@ -65,6 +65,38 @@ func (p player) rankString() string {
 	return fmt.Sprintf("%d dan", int(p.rank-30+0.5)+1)
 }
 
+// @region game:chat
+
+// Game chat channel, matching OGS send-side types. main = discussion (both
+// players + spectators); malkovich = hidden from the opponent during play,
+// visible to spectators; personal = private notes only the author sees.
+type chatChannel string
+
+const (
+	chatMain      chatChannel = "main"
+	chatMalkovich chatChannel = "malkovich"
+	chatPersonal  chatChannel = "personal"
+)
+
+// Channels the composer cycles through (tab), in order.
+var chatModes = []chatChannel{chatMain, chatMalkovich, chatPersonal}
+
+// A single chat line, source-agnostic. id is the backend's dedup key (empty
+// while an outgoing message is still optimistic, awaiting the server echo).
+// isVariation marks a typed analysis/review body (rendered as a marker only —
+// replaying the variation on the board is future work).
+type chatMessage struct {
+	id          string
+	playerID    int64
+	username    string
+	body        string
+	channel     chatChannel
+	moveNumber  int
+	date        int64 // unix seconds
+	isVariation bool
+	pending     bool // optimistic local echo, not yet confirmed by the server
+}
+
 // A single play. A pass has x == y == -1.
 type move struct {
 	x, y  int

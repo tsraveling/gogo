@@ -21,12 +21,17 @@ func newHotseatBackend(st boardState, prevGrid [][]stoneColor) *hotseatBackend {
 	return &hotseatBackend{state: st, prevGrid: prevGrid}
 }
 
-func (b *hotseatBackend) Connect(emit func(boardState), _ func()) error {
+func (b *hotseatBackend) Connect(emit func(boardState), _ func(), _ func(chatMessage)) error {
 	b.emit = emit
 	b.state.moves = b.moves // carry restored history so the trail shows on reopen
 	emit(b.state)           // surface the starting position
 	return nil
 }
+
+// No remote party to chat with.
+func (b *hotseatBackend) SendChat(chatMessage) error { return errSubmitUnsupported }
+
+func (b *hotseatBackend) SupportsChat() bool { return false }
 
 // No socket to lose — always reported alive so the focus/reconnect machinery
 // (OGS-only) never tries to redial a hotseat game.

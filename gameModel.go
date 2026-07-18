@@ -36,6 +36,8 @@ type gameModel struct {
 	submitOK    bool   // brief ✓ after a confirmed remote submit
 	passConfirm bool   // pass-confirm box is open, capturing input
 	fastMode    bool   // space plays immediately, skipping the ghost step
+	termW       int    // last known terminal size, for chat layout
+	termH       int
 }
 
 // How long the green ✓ shows after a confirmed OGS submit.
@@ -50,16 +52,104 @@ func newGameModel(idx int, g game, b backend) gameModel {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	sp.Style = lipgloss.NewStyle().Foreground(primaryColor)
+	chat := newChatModel()
+	chat.setContext(g, b != nil && b.SupportsChat())
 	return gameModel{
 		idx:      idx,
 		game:     g,
 		backend:  b,
 		board:    newBoardModel(g.width, g.height),
 		info:     newInfoModel(),
-		chat:     newChatModel(),
+		chat:     chat,
 		navGoto:  ti,
 		spinner:  sp,
 		fastMode: g.you == empty, // hotseat: no fixed side, default to fast play
+	}
+}
+
+// setSize records the terminal size and re-lays the chat viewport.
+func (g *gameModel) setSize(termW, termH int) {
+	g.termW = termW
+	g.termH = termH
+	g.syncChat()
+}
+
+// Rows the tab bar + its trailing blank consume above the body (see model.View).
+const tabOverhead = 2
+
+// chatDims computes the chat panel's width/height. The meta column fills the
+// body height rather than tracking the shorter board column, so chat space no
+// longer shrinks with the board.
+func (g gameModel) chatDims() (int, int) {
+	const leftMargin = 2
+	const colGap = 3
+	const infoH = 3
+	metaW := max(g.termW-leftMargin-g.board.renderWidth()-colGap, 0)
+	bodyH := g.termH - tabOverhead
+	return metaW, max(bodyH-infoH, 1)
+}
+
+// syncChat re-lays the chat viewport for the current size.
+func (g *gameModel) syncChat() {
+	w, h := g.chatDims()
+	g.chat.refresh(w, h)
+}
+
+// addChat appends an incoming line and re-lays the log.
+func (g *gameModel) addChat(m chatMessage) {
+	g.chat.addMessage(m)
+	g.syncChat()
+}
+
+// myPlayerID / myName identify the local user for outgoing (optimistic) chat,
+// derived from the side they play. Zero/empty in a hotseat game (no chat).
+func (g gameModel) myPlayerID() int64 {
+	switch g.game.you {
+	case black:
+		return g.game.black.id
+	case white:
+		return g.game.white.id
+	}
+	return 0
+}
+
+func (g gameModel) myName() string {
+	switch g.game.you {
+	case black:
+		return g.game.black.name
+	case white:
+		return g.game.white.name
+	}
+	return ""
+}
+
+// sendChat adds the line optimistically and dispatches it to the backend; the
+// server echo (with a chat_id) upgrades the optimistic entry.
+func (g *gameModel) sendChat(text string) tea.Cmd {
+	m := chatMessage{
+		playerID:   g.myPlayerID(),
+		username:   g.myName(),
+		body:       text,
+		channel:    g.chat.mode,
+		moveNumber: g.game.state.moveNumber,
+		date:       time.Now().Unix(),
+		pending:    true,
+	}
+	g.chat.addMessage(m)
+	g.syncChat()
+	return sendChatCmd(g.backend, g.game.id, m)
+}
+
+// Result of a chat send, routed by gameID. Errors are non-fatal (the optimistic
+// line already shows); wired for future surfacing.
+type chatSentMsg struct {
+	gameID int64
+	err    error
+}
+
+func sendChatCmd(b backend, gameID int64, m chatMessage) tea.Cmd {
+	return func() tea.Msg {
+		return chatSentMsg{gameID: gameID, err: b.SendChat(m)}
 	}
 }
 
@@ -207,8 +297,9 @@ func navErrorCmd(idx int) tea.Cmd {
 	return tea.Tick(navErrorTTL, func(time.Time) tea.Msg { return navErrorExpiredMsg{game: idx} })
 }
 
-// True while a modal-like prompt should swallow keys (tabs/quit disabled).
-func (g gameModel) capturingInput() bool { return g.navMode || g.passConfirm }
+// True while a modal-like prompt should swallow keys (tabs/quit disabled). A
+// focused chat composer captures too — tab cycles its mode, keys type.
+func (g gameModel) capturingInput() bool { return g.navMode || g.passConfirm || g.chat.focused }
 
 // @region game:input
 
@@ -234,10 +325,19 @@ func (g gameModel) Update(msg tea.Msg) (gameModel, tea.Cmd) {
 		if g.passConfirm {
 			return g.updatePassConfirm(msg)
 		}
+		if g.chat.focused {
+			return g.updateChat(msg)
+		}
 		if g.committing {
 			return g, nil // board frozen while a move is in flight
 		}
 		switch msg.String() {
+		case "-":
+			g.chat.scrollUp()
+			return g, nil
+		case "=":
+			g.chat.scrollDown()
+			return g, nil
 		case "g":
 			g.navMode = true
 			g.navErr = false
@@ -254,7 +354,14 @@ func (g gameModel) Update(msg tea.Msg) (gameModel, tea.Cmd) {
 			g.toggleGhost()
 			return g, nil
 		case "enter":
-			return g.commitMove()
+			// A pending stone commits; otherwise enter jumps into the chat composer.
+			if g.board.ghostActive {
+				return g.commitMove()
+			}
+			if g.chat.canChat {
+				return g, g.chat.focus()
+			}
+			return g, nil
 		case "p":
 			if reason := g.playBlockReason(); reason != "" {
 				g.moveErr = reason
@@ -275,14 +382,44 @@ func (g gameModel) Update(msg tea.Msg) (gameModel, tea.Cmd) {
 		}
 		return g, nil
 	default:
-		// Async textinput messages (cursor blink) only matter while navigating.
+		// Async textinput/textarea messages (cursor blink) go to whichever input
+		// is live.
 		if g.navMode {
 			var cmd tea.Cmd
 			g.navGoto, cmd = g.navGoto.Update(msg)
 			return g, cmd
 		}
+		if g.chat.focused {
+			var cmd tea.Cmd
+			g.chat, cmd = g.chat.Update(msg)
+			return g, cmd
+		}
 	}
 	return g, nil
+}
+
+// updateChat handles keys while the chat composer is focused. Enter sends (empty
+// = no-op, stays focused); esc clears and unfocuses; tab cycles the channel.
+func (g gameModel) updateChat(msg tea.KeyMsg) (gameModel, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		g.chat.blur()
+		return g, nil
+	case "tab":
+		g.chat.cycleMode()
+		return g, nil
+	case "enter":
+		text := strings.TrimSpace(g.chat.ta.Value())
+		if text == "" {
+			return g, nil // nothing typed: stay focused, do nothing
+		}
+		cmd := g.sendChat(text)
+		g.chat.ta.Reset()
+		return g, cmd // stays focused for the next line
+	}
+	var cmd tea.Cmd
+	g.chat, cmd = g.chat.Update(msg)
+	return g, cmd
 }
 
 // Handles keys while the "Go to" prompt is open.
@@ -390,14 +527,12 @@ func (g gameModel) View(termW, termH int) string {
 	default:
 		boardCol = lipgloss.JoinVertical(lipgloss.Left, g.board.View(), g.controlView(boardW))
 	}
-	colHeight := lipgloss.Height(boardCol)
-
 	// Layout: 2-col left margin, board, 3-col gap, then the meta column.
 	const leftMargin = 2
 	const colGap = 3
-	metaW := max(termW-leftMargin-boardW-colGap, 0)
-	infoH := 6
-	chatH := max(colHeight-infoH, 0)
+	const infoH = 3
+	metaW, chatH := g.chatDims()
+	g.chat.refresh(metaW, chatH) // size the viewport to the current width (copy)
 	metaCol := lipgloss.JoinVertical(
 		lipgloss.Left,
 		g.info.View(g.game, metaW, infoH),

@@ -51,6 +51,15 @@ type emitMove struct {
 	Move     string `json:"move"`
 }
 
+// game/chat payload. type is the channel; move_number anchors the line to the
+// board position it was posted at.
+type emitChatMsg struct {
+	GameID     int64  `json:"game_id"`
+	Type       string `json:"type"`
+	MoveNumber int    `json:"move_number"`
+	Body       string `json:"body"`
+}
+
 // SGF coordinate for a move: two letters, "aa" = top-left, x then y. Pass is
 // ".." (OGS convention). Boards up to 26 wide (lowercase only), matching termsuji.
 func sgfCoord(m move) string {
@@ -74,7 +83,7 @@ type socketAuth struct {
 // history OGS streams. onDrop fires on an unintentional disconnect (a real
 // network drop), never on a Disconnect() close. The caller owns the returned
 // socket and must Disconnect it.
-func connectGame(gameID int64, auth socketAuth, onGamedata func([]move), onMove func(move, int), onDrop func()) (*gameSocket, error) {
+func connectGame(gameID int64, auth socketAuth, onGamedata func([]move), onMove func(move, int), onChat func(chatMessage), onDrop func()) (*gameSocket, error) {
 	c, err := gosocketio.Dial(realtimeURL, transport.GetDefaultWebsocketTransport())
 	if err != nil {
 		return nil, err
@@ -90,6 +99,13 @@ func connectGame(gameID int64, auth socketAuth, onGamedata func([]move), onMove 
 	_ = c.On(fmt.Sprintf("game/%d/move", gameID), func(_ any, p ogsMovePayload) {
 		onMove(p.Move.move(), p.MoveNumber)
 	})
+	// game/<id>/chat fires per line; on connect (chat enabled) the whole log is
+	// replayed as a burst of these. The caller dedups by chat_id.
+	if onChat != nil {
+		_ = c.On(fmt.Sprintf("game/%d/chat", gameID), func(_ any, p ogsChatPayload) {
+			onChat(p.chatMessage())
+		})
+	}
 	// Emit only once the socket.io connection is open — emitting before the
 	// handshake completes silently loses the subscription and no data comes.
 	// Closing ready lets a submit wait until authenticate + game/connect are
@@ -137,7 +153,7 @@ func (s *gameSocket) authenticate(auth socketAuth) {
 	if auth.chatAuth != "" {
 		s.c.Emit("authenticate", &emitAuth{Auth: auth.chatAuth, PlayerID: auth.playerID, Username: auth.username})
 	}
-	s.c.Emit("game/connect", &emitGameConnect{GameID: s.gameID, PlayerID: auth.playerID, Chat: false})
+	s.c.Emit("game/connect", &emitGameConnect{GameID: s.gameID, PlayerID: auth.playerID, Chat: true})
 }
 
 // submitMove emits a move over the game socket. The authoritative result comes
@@ -147,6 +163,21 @@ func (s *gameSocket) submitMove(playerID int64, m move) error {
 		return errNoSocket
 	}
 	s.c.Emit("game/move", &emitMove{GameID: s.gameID, PlayerID: playerID, Move: sgfCoord(m)})
+	return nil
+}
+
+// sendChat emits a chat line. The server broadcasts it back (including to us) as
+// a game/<id>/chat event carrying the authoritative chat_id.
+func (s *gameSocket) sendChat(m chatMessage) error {
+	if s == nil || s.c == nil {
+		return errNoSocket
+	}
+	s.c.Emit("game/chat", &emitChatMsg{
+		GameID:     s.gameID,
+		Type:       string(m.channel),
+		MoveNumber: m.moveNumber,
+		Body:       m.body,
+	})
 	return nil
 }
 

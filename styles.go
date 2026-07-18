@@ -57,6 +57,22 @@ var (
 	// Finished-game marker (both players passed). Scoring is separate.
 	gameOverStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("220"))
 
+	// @region chat:style
+
+	// Chat body colors by channel, matching the composer's mode labels: main
+	// white, malkovich light green, personal light blue.
+	chatMainStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("231"))
+	chatMalkovichStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("120"))
+	chatPersonalStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("117"))
+	// Posted variations: not replayed yet, flagged bold orange.
+	chatVariationStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("208"))
+	// Turn divider between chat lines anchored to different moves.
+	chatTurnStyle = lipgloss.NewStyle().Foreground(dimColor)
+	// Non-player (spectator) name tag.
+	chatSpectatorStyle = lipgloss.NewStyle().Foreground(dimColor)
+	// Inactive composer mode label.
+	chatModeIdleStyle = lipgloss.NewStyle().Foreground(dimColor)
+
 	// Auth modal box.
 	modalStyle = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
