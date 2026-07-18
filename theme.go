@@ -28,7 +28,28 @@ type boardTheme struct {
 
 	turnGlyph string         // current-turn marker
 	turn      lipgloss.Style // its color
+
+	// Recency trail backgrounds, newest → oldest (len trailLen). A stone played
+	// in the last trailLen moves sits on trail[rank]; rank 0 is the freshest.
+	trail [trailLen]lipgloss.Color
+
+	captureGlyph string         // mark on a point cleared last turn
+	capture      lipgloss.Style // its color
 }
+
+// Styled glyph for a committed stone sitting on the recency trail: the trail
+// background with a forced high-contrast foreground so both poles stay legible.
+func (t boardTheme) trailCell(c stoneColor, rank int) string {
+	fg := lipgloss.Color("232") // near-black for black stones
+	g := t.blackGlyph
+	if c == white {
+		fg, g = lipgloss.Color("231"), t.whiteGlyph
+	}
+	return lipgloss.NewStyle().Bold(true).Foreground(fg).Background(t.trail[rank]).Render(g)
+}
+
+// Styled mark for a point whose stone was captured on the last move.
+func (t boardTheme) captureCell() string { return t.capture.Render(t.captureGlyph) }
 
 // Styled glyph for a committed stone.
 func (t boardTheme) stoneCell(c stoneColor) string {
@@ -65,6 +86,12 @@ func classicTheme() boardTheme {
 		cursor:      lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("231")),
 		turnGlyph:   "▶",
 		turn:        lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("226")), // bright yellow
+		trail: [trailLen]lipgloss.Color{
+			lipgloss.Color("#009600"), // most recent move
+			lipgloss.Color("#003200"), // second most recent
+		},
+		captureGlyph: "×",
+		capture:      lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("196")), // red
 	}
 }
 

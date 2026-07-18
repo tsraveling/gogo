@@ -25,6 +25,11 @@ type boardModel struct {
 	ghostX      int
 	ghostY      int
 	ghostColor  stoneColor
+
+	// Recency trail: the last few moves, newest first. Passes stay in the slot
+	// order (Q5) but match no point. captures are the points cleared last turn.
+	trail    []move
+	captures []move
 }
 
 func newBoardModel(w, h int) boardModel {
@@ -33,6 +38,36 @@ func newBoardModel(w, h int) boardModel {
 
 // Feeds the renderer a stone grid ([y][x]). Reused later for replay/variants.
 func (b *boardModel) setState(grid [][]stoneColor) { b.grid = grid }
+
+// @region board:trail
+
+// Sets the recency trail (newest first, len ≤ trailLen).
+func (b *boardModel) setTrail(t []move) { b.trail = t }
+
+// Sets the points cleared on the last move (rendered with a capture mark until
+// the next snapshot).
+func (b *boardModel) setCaptures(c []move) { b.captures = c }
+
+// trailRank returns the point's recency rank (0 = freshest) or -1 if it's not on
+// the trail. The newest match wins, so a ko recapture highlights as fresh.
+func (b boardModel) trailRank(x, y int) int {
+	for i, m := range b.trail {
+		if !m.isPass() && m.x == x && m.y == y {
+			return i
+		}
+	}
+	return -1
+}
+
+// captured reports whether the point was cleared on the last move.
+func (b boardModel) captured(x, y int) bool {
+	for _, m := range b.captures {
+		if m.x == x && m.y == y {
+			return true
+		}
+	}
+	return false
+}
 
 // Stone at the point, or empty when off-grid / no grid loaded.
 func (b boardModel) stoneAt(x, y int) stoneColor {
@@ -171,15 +206,21 @@ func (b boardModel) boardRow(y int) string {
 	return sb.String()
 }
 
-// One point (via the active theme): a stone if occupied, a dimmed ghost if
-// previewed, else a star or empty intersection.
+// One point (via the active theme): a stone (trail-highlighted if recent) if
+// occupied, a ghost if previewed, a capture mark on a just-cleared point, else
+// a star or empty intersection.
 func (b boardModel) cellStr(x, y int) string {
-	switch b.stoneAt(x, y) {
-	case black, white:
-		return currentTheme.stoneCell(b.stoneAt(x, y))
+	if c := b.stoneAt(x, y); c != empty {
+		if rank := b.trailRank(x, y); rank >= 0 {
+			return currentTheme.trailCell(c, rank)
+		}
+		return currentTheme.stoneCell(c)
 	}
 	if b.ghostActive && b.ghostX == x && b.ghostY == y {
 		return currentTheme.ghostCell(b.ghostColor)
+	}
+	if b.captured(x, y) {
+		return currentTheme.captureCell()
 	}
 	if b.isStar(x, y) {
 		return currentTheme.grid.Render(currentTheme.starGlyph)

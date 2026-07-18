@@ -73,13 +73,29 @@ type move struct {
 
 func (m move) isPass() bool { return m.x == -1 && m.y == -1 }
 
+// How many recent moves the board trail highlights (newest → oldest).
+const trailLen = 2
+
 // The grid plus turn/phase info. grid is indexed [y][x], matching OGS.
+// moves is the full ordered history (oldest first); the renderer highlights
+// its tail (see boardModel trail).
 type boardState struct {
 	grid         [][]stoneColor
 	moveNumber   int
 	playerToMove stoneColor
 	lastMove     move
 	phase        gamePhase
+	moves        []move
+}
+
+// trail returns the last trailLen moves, newest first, for recency highlighting.
+func (b boardState) trail() []move {
+	n := len(b.moves)
+	out := make([]move, 0, trailLen)
+	for i := n - 1; i >= 0 && len(out) < trailLen; i-- {
+		out = append(out, b.moves[i])
+	}
+	return out
 }
 
 func (b boardState) height() int { return len(b.grid) }

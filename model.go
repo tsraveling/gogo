@@ -309,6 +309,11 @@ type openGameMsg struct {
 	game game
 }
 
+// Confirmed deletion of a local game from the home list.
+type deleteLocalGameMsg struct {
+	id int64
+}
+
 // Fetches active games off the UI goroutine; empty list on error (MVP).
 func fetchGamesCmd(o ogsModel) tea.Cmd {
 	return func() tea.Msg {
@@ -365,6 +370,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.restoreTabs(msg.games)
 	case openGameMsg:
 		return m, m.openGame(msg.game)
+	case deleteLocalGameMsg:
+		// Close an open tab for this game (if any), then remove it from disk and
+		// refresh the home list.
+		for i, t := range m.tabs {
+			if t.GameID == msg.id {
+				m.closeTab(i)
+				break
+			}
+		}
+		_ = deleteLocalGame(msg.id)
+		if lg, err := loadLocalGames(); err == nil {
+			m.home.setLocalGames(lg)
+		}
+		return m, nil
 	case gameEvent:
 		if msg.dropped {
 			// Only the focused tab holds a socket, so only its drop starts the
@@ -522,6 +541,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.active > 0 && m.games[m.active-1].capturingInput() {
 			var cmd tea.Cmd
 			m.games[m.active-1], cmd = m.games[m.active-1].Update(msg)
+			return m, cmd
+		}
+		// The home delete-confirm captures all input (incl. esc/q) until resolved.
+		if m.active == 0 && m.home.confirm.active() {
+			var cmd tea.Cmd
+			m.home, cmd = m.home.Update(msg)
 			return m, cmd
 		}
 		// Q (shift+q) logs out when authenticated; guarded key to avoid misfires.

@@ -150,6 +150,27 @@ func collectGroup(grid [][]stoneColor, x, y int) (cells [][2]int, liberties int)
 	return cells, len(libs)
 }
 
+// capturedPoints returns the points that held a stone in prev and are empty in
+// cur — the stones removed between the two positions. The just-played point goes
+// empty → stone, so it never appears here.
+func capturedPoints(prev, cur [][]stoneColor) []move {
+	var out []move
+	for y := range cur {
+		if y >= len(prev) {
+			break
+		}
+		for x := range cur[y] {
+			if x >= len(prev[y]) {
+				break
+			}
+			if prev[y][x] != empty && cur[y][x] == empty {
+				out = append(out, move{x: x, y: y})
+			}
+		}
+	}
+	return out
+}
+
 func cloneGrid(g [][]stoneColor) [][]stoneColor {
 	out := make([][]stoneColor, len(g))
 	for y := range g {

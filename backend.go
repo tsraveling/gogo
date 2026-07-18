@@ -79,6 +79,7 @@ type ogsBackend struct {
 
 	mu    sync.Mutex
 	ackCh chan error // set while a SubmitMove awaits the server's broadcast
+	moves []move     // ordered history from gamedata/move events (mu-guarded)
 }
 
 func (b *ogsBackend) Connect(emit func(boardState), onDrop func()) error {
@@ -90,7 +91,7 @@ func (b *ogsBackend) Connect(emit func(boardState), onDrop func()) error {
 // dial opens the game socket, wiring the state-change/drop handlers.
 func (b *ogsBackend) dial() error {
 	auth, _ := b.buildAuth() // best-effort; empty chat_auth = unauthenticated read
-	s, err := connectGame(b.gameID, auth, b.onChange, b.onMove, b.onDrop)
+	s, err := connectGame(b.gameID, auth, b.onGamedata, b.onMove, b.onDrop)
 	if err != nil {
 		return err
 	}
@@ -98,19 +99,48 @@ func (b *ogsBackend) dial() error {
 	return nil
 }
 
-// Refreshes the board on any state change (connect, move, scoring).
-func (b *ogsBackend) onChange() {
+// onGamedata adopts the authoritative move list (connect/scoring) and refreshes.
+func (b *ogsBackend) onGamedata(ms []move) {
+	b.mu.Lock()
+	b.moves = ms
+	b.mu.Unlock()
+	b.refresh()
+}
+
+// onMove records one appended move by its 1-based number (self-healing against a
+// duplicate/replayed event), refreshes the board, then confirms a pending submit.
+// A move broadcast is the only event that acks — gamedata fires on connect too.
+func (b *ogsBackend) onMove(m move, moveNum int) {
+	b.recordMove(m, moveNum)
+	b.refresh()
+	b.signalAck(nil)
+}
+
+// recordMove places m at its 1-based number, appending on an unknown number or a
+// gap and replacing on a replayed tail.
+func (b *ogsBackend) recordMove(m move, moveNum int) {
+	b.mu.Lock()
+	idx := moveNum - 1
+	if moveNum <= 0 || idx > len(b.moves) {
+		idx = len(b.moves)
+	}
+	b.moves = append(b.moves[:idx], m)
+	b.mu.Unlock()
+}
+
+// Refreshes the board on any state change (connect, move, scoring), attaching the
+// current move history so the renderer can highlight the recency trail.
+func (b *ogsBackend) refresh() {
 	st, err := fetchBoardState(b.accessToken(), b.gameID, b.whiteID)
 	if err != nil {
 		b.signalAck(err) // unblock a pending submit even if the refetch failed
 		return
 	}
+	b.mu.Lock()
+	st.moves = b.moves
+	b.mu.Unlock()
 	b.emit(st)
 }
-
-// Confirms a submission — fires only on a move broadcast, so the gamedata that
-// arrives on connect can't falsely ack a move that never got sent.
-func (b *ogsBackend) onMove() { b.signalAck(nil) }
 
 // reconnect performs one reconnect attempt after a drop: refresh auth if it
 // lapsed, dial, wait for the handshake, and fetch the board. Success (nil) means
@@ -131,7 +161,7 @@ func (b *ogsBackend) reconnect() error {
 			return errSessionExpired
 		}
 	}
-	s, err := connectGame(b.gameID, auth, b.onChange, b.onMove, b.onDrop)
+	s, err := connectGame(b.gameID, auth, b.onGamedata, b.onMove, b.onDrop)
 	if err != nil {
 		return err
 	}
@@ -145,6 +175,9 @@ func (b *ogsBackend) reconnect() error {
 		s.Disconnect()
 		return err
 	}
+	b.mu.Lock()
+	st.moves = b.moves
+	b.mu.Unlock()
 	b.emit(st) // first snapshot: clears the reconnecting state on the tea loop
 	return nil
 }

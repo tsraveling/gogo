@@ -67,28 +67,28 @@ type socketAuth struct {
 	chatAuth string
 }
 
-// connectGame opens a socket for one game and calls onChange whenever a gamedata
-// (connect / scoring / finished) or move event fires. Neither carries a rendered
-// board, so they serve purely as "state changed" triggers — the caller fetches
-// the board via fetchBoardState. onDrop fires on an unintentional disconnect (a
-// real network drop), never on a Disconnect() close. The caller owns the returned
+// connectGame opens a socket for one game. onGamedata fires with the full move
+// list on connect / scoring / finished; onMove fires with one appended move on
+// every played move (ours and the opponent's). Neither event carries a rendered
+// board, so the caller refetches via fetchBoardState — the move list is the only
+// history OGS streams. onDrop fires on an unintentional disconnect (a real
+// network drop), never on a Disconnect() close. The caller owns the returned
 // socket and must Disconnect it.
-func connectGame(gameID int64, auth socketAuth, onChange func(), onMove func(), onDrop func()) (*gameSocket, error) {
+func connectGame(gameID int64, auth socketAuth, onGamedata func([]move), onMove func(move, int), onDrop func()) (*gameSocket, error) {
 	c, err := gosocketio.Dial(realtimeURL, transport.GetDefaultWebsocketTransport())
 	if err != nil {
 		return nil, err
 	}
 	s := &gameSocket{c: c, gameID: gameID, ready: make(chan struct{})}
-	// gamedata fires on connect and during scoring/finished; move fires on every
-	// played move (ours and the opponent's). Both refetch the board via onChange.
-	// Only move confirms a submission (onMove) — gamedata also fires on connect,
-	// so acking on it would falsely confirm a move that never left the socket.
-	_ = c.On(fmt.Sprintf("game/%d/gamedata", gameID), func(_ any, _ map[string]any) {
-		onChange()
+	// gamedata fires on connect and during scoring/finished (full move list); move
+	// fires on every played move (one appended move). Only move confirms a
+	// submission — gamedata also fires on connect, so acking on it would falsely
+	// confirm a move that never left the socket.
+	_ = c.On(fmt.Sprintf("game/%d/gamedata", gameID), func(_ any, p ogsGamedataPayload) {
+		onGamedata(gamedataMoves(p))
 	})
-	_ = c.On(fmt.Sprintf("game/%d/move", gameID), func(_ any, _ map[string]any) {
-		onChange()
-		onMove()
+	_ = c.On(fmt.Sprintf("game/%d/move", gameID), func(_ any, p ogsMovePayload) {
+		onMove(p.Move.move(), p.MoveNumber)
 	})
 	// Emit only once the socket.io connection is open — emitting before the
 	// handshake completes silently loses the subscription and no data comes.

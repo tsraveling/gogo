@@ -47,6 +47,9 @@ type homeModel struct {
 	authPending bool   // validating a stored login; sign-in stays hidden
 	username    string // OGS login shown in the status bar
 	sessionExpired bool // auth died mid-session; red banner until next sign-in
+
+	confirm       confirm // active yes/no prompt (delete), captures all input
+	pendingDelete int64   // local game id awaiting delete confirmation
 }
 
 func newHomeModel() homeModel {
@@ -174,11 +177,33 @@ func (h homeModel) Update(msg tea.Msg) (homeModel, tea.Cmd) {
 	if !ok {
 		return h, nil
 	}
+	// A pending confirm swallows all input until resolved.
+	if h.confirm.active() {
+		switch h.confirm.handle(msg) {
+		case confirmYes:
+			id := h.pendingDelete
+			h.confirm = confirm{}
+			return h, func() tea.Msg { return deleteLocalGameMsg{id: id} }
+		case confirmNo:
+			h.confirm = confirm{}
+		}
+		return h, nil
+	}
 	switch key.String() {
 	case "up", "k":
 		h.moveCursor(-1)
 	case "down", "j":
 		h.moveCursor(1)
+	case "D":
+		// Delete only applies to local games; OGS games can't be removed here.
+		if h.cursor < len(h.entries) {
+			e := h.entries[h.cursor]
+			if e.kind == entryGame && e.game.id < 0 {
+				h.pendingDelete = e.game.id
+				h.confirm = newConfirm(confirmDeleteGame,
+					fmt.Sprintf("Delete local game %q? y to confirm · n to cancel", e.game.name))
+			}
+		}
 	case "enter":
 		if h.cursor < len(h.entries) {
 			e := h.entries[h.cursor]
@@ -258,6 +283,10 @@ func windowLines(lines []string, selStart, selCount, h int) []string {
 
 // Login status bar: validating, or logged-in with refresh/logout hints.
 func (h homeModel) statusBar(w int) string {
+	// A pending confirm takes over the status line.
+	if h.confirm.active() {
+		return reconnectStyle.Width(w).Align(lipgloss.Center).Render("⚠ " + h.confirm.prompt)
+	}
 	switch {
 	case h.sessionExpired:
 		return errorStyle.Width(w).Align(lipgloss.Center).Bold(true).Render("Session expired — sign in again")

@@ -23,7 +23,8 @@ func newHotseatBackend(st boardState, prevGrid [][]stoneColor) *hotseatBackend {
 
 func (b *hotseatBackend) Connect(emit func(boardState), _ func()) error {
 	b.emit = emit
-	emit(b.state) // surface the starting position
+	b.state.moves = b.moves // carry restored history so the trail shows on reopen
+	emit(b.state)           // surface the starting position
 	return nil
 }
 
@@ -42,8 +43,9 @@ func (b *hotseatBackend) SubmitMove(m move) error {
 	b.prevGrid = b.state.grid // pre-move position becomes the ko reference
 	b.state = next
 	b.moves = append(b.moves, m)
+	b.state.moves = b.moves
 	if b.emit != nil {
-		b.emit(next)
+		b.emit(b.state)
 	}
 	if b.onCommit != nil {
 		b.onCommit(b)

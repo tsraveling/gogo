@@ -79,7 +79,16 @@ func (g *gameModel) beginConnect() tea.Cmd {
 // snapshot means the socket is healthy, so it clears every connect/reconnect
 // state and invalidates any pending ladder ticks.
 func (g *gameModel) applySnapshot(st boardState) {
+	// Capture marks: points that held a stone before and are empty now (play
+	// phase only — stone-removal scoring also clears points). Diffing works for
+	// every backend without backend-specific capture reporting.
+	if st.phase == phasePlay {
+		g.board.setCaptures(capturedPoints(g.game.state.grid, st.grid))
+	} else {
+		g.board.setCaptures(nil)
+	}
 	g.board.setState(st.grid)
+	g.board.setTrail(st.trail())
 	g.game.state = st
 	g.connecting = false
 	g.connectErr = false
