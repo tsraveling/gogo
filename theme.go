@@ -51,6 +51,19 @@ func (t boardTheme) trailCell(c stoneColor, rank int) string {
 // Styled mark for a point whose stone was captured on the last move.
 func (t boardTheme) captureCell() string { return t.capture.Render(t.captureGlyph) }
 
+// Cursor bracket style tinted to the stone the local player places: bright for
+// white, gray for black. Falls back to the plain cursor style when sideless.
+func (t boardTheme) cursorStyle(c stoneColor) lipgloss.Style {
+	switch c {
+	case white:
+		return t.white
+	case black:
+		return t.black
+	default:
+		return t.cursor
+	}
+}
+
 // Styled glyph for a committed stone.
 func (t boardTheme) stoneCell(c stoneColor) string {
 	if c == white {

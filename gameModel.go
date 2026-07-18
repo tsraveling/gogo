@@ -180,6 +180,7 @@ func (g *gameModel) applySnapshot(st boardState) {
 	g.board.setState(st.grid)
 	g.board.setTrail(st.trail())
 	g.game.state = st
+	g.board.setCursorColor(g.placingColor()) // hotseat: follows the side to move
 	g.connecting = false
 	g.connectErr = false
 	g.reconnecting = false

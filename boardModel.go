@@ -19,6 +19,7 @@ type boardModel struct {
 	interactable bool           // show and move a cursor
 	cursorX      int
 	cursorY      int
+	cursorColor  stoneColor     // tints the cursor to the side the player places
 
 	// Uncommitted move preview: a hollow stone shown before enter commits it.
 	ghostActive bool
@@ -38,6 +39,9 @@ func newBoardModel(w, h int) boardModel {
 
 // Feeds the renderer a stone grid ([y][x]). Reused later for replay/variants.
 func (b *boardModel) setState(grid [][]stoneColor) { b.grid = grid }
+
+// Tints the cursor to the side the local player places.
+func (b *boardModel) setCursorColor(c stoneColor) { b.cursorColor = c }
 
 // @region board:trail
 
@@ -178,9 +182,10 @@ func (b boardModel) boardRow(y int) string {
 		cx = b.cursorX
 	}
 
+	cur := currentTheme.cursorStyle(b.cursorColor)
 	var sb strings.Builder
 	if cx == 0 {
-		sb.WriteString(currentTheme.cursor.Render("["))
+		sb.WriteString(cur.Render("["))
 	} else {
 		sb.WriteByte(' ')
 	}
@@ -191,15 +196,15 @@ func (b boardModel) boardRow(y int) string {
 		}
 		switch {
 		case x == cx:
-			sb.WriteString(currentTheme.cursor.Render("]"))
+			sb.WriteString(cur.Render("]"))
 		case x+1 == cx:
-			sb.WriteString(currentTheme.cursor.Render("["))
+			sb.WriteString(cur.Render("["))
 		default:
 			sb.WriteByte(' ')
 		}
 	}
 	if cx == b.width-1 {
-		sb.WriteString(currentTheme.cursor.Render("]"))
+		sb.WriteString(cur.Render("]"))
 	} else {
 		sb.WriteByte(' ')
 	}
