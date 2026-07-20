@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## v0.1.1 - 2026-07-20
+#### Bug Fixes
+- added goreleaser - (039c187) - Tim Raveling
+
+- - -
+
 ## v0.1.0 - 2026-07-20
 #### Features
 - MVP (#1) - (934ffa3) - Tim Raveling
