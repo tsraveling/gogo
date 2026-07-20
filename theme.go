@@ -81,14 +81,14 @@ func (t boardTheme) ghostCell(c stoneColor) string {
 	return st.Background(t.placeholder.GetBackground()).Render(g)
 }
 
-// "Classic": both sides filled ●, correct polarity (black darker, white bright),
+// "Classic": both sides filled ⬤, correct polarity (black darker, white bright),
 // on a dim-yellow grid for the traditional go-board feel. Placeholder sits on a
 // soft dark-blue tile.
 func classicTheme() boardTheme {
 	return boardTheme{
 		name:        "classic",
-		blackGlyph:  "●",
-		whiteGlyph:  "●",
+		blackGlyph:  "⬤",
+		whiteGlyph:  "⬤",
 		emptyGlyph:  "·",
 		starGlyph:   "+",
 		black:       lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("245")), // mid gray
