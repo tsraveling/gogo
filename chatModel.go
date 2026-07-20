@@ -34,7 +34,7 @@ type chatModel struct {
 
 func newChatModel() chatModel {
 	ta := textarea.New()
-	ta.Placeholder = "Hit ENTER to chat"
+	ta.Placeholder = "Hit / to chat"
 	ta.Prompt = ""
 	ta.ShowLineNumbers = false
 	ta.CharLimit = 400
@@ -109,11 +109,13 @@ func (c *chatModel) cycleMode() {
 
 func (c *chatModel) focus() tea.Cmd {
 	c.focused = true
+	c.ta.Placeholder = "Hit ESC to stop chatting"
 	return c.ta.Focus()
 }
 
 func (c *chatModel) blur() {
 	c.focused = false
+	c.ta.Placeholder = "Hit / to chat"
 	c.ta.Blur()
 	c.ta.Reset()
 }

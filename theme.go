@@ -37,15 +37,15 @@ type boardTheme struct {
 	capture      lipgloss.Style // its color
 }
 
-// Styled glyph for a committed stone sitting on the recency trail: the trail
-// background with a forced high-contrast foreground so both poles stay legible.
+// Styled glyph for a committed stone sitting on the recency trail: the stone's
+// normal foreground over the trail background, so a stone keeps its color and
+// only the background marks recency.
 func (t boardTheme) trailCell(c stoneColor, rank int) string {
-	fg := lipgloss.Color("232") // near-black for black stones
-	g := t.blackGlyph
+	st, g := t.black, t.blackGlyph
 	if c == white {
-		fg, g = lipgloss.Color("231"), t.whiteGlyph
+		st, g = t.white, t.whiteGlyph
 	}
-	return lipgloss.NewStyle().Bold(true).Foreground(fg).Background(t.trail[rank]).Render(g)
+	return lipgloss.NewStyle().Bold(true).Foreground(st.GetForeground()).Background(t.trail[rank]).Render(g)
 }
 
 // Styled mark for a point whose stone was captured on the last move.

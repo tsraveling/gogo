@@ -355,10 +355,13 @@ func (g gameModel) Update(msg tea.Msg) (gameModel, tea.Cmd) {
 			g.toggleGhost()
 			return g, nil
 		case "enter":
-			// A pending stone commits; otherwise enter jumps into the chat composer.
+			// A pending stone commits.
 			if g.board.ghostActive {
 				return g.commitMove()
 			}
+			return g, nil
+		case "/":
+			// Jump into the chat composer.
 			if g.chat.canChat {
 				return g, g.chat.focus()
 			}

@@ -624,36 +624,120 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// Longest game name shown on a tab; longer names are truncated with an ellipsis.
+const maxTabNameLen = 12
+
+// Trims s to maxTabNameLen runes, appending "…" when clipped.
+func truncTabName(s string) string {
+	r := []rune(s)
+	if len(r) <= maxTabNameLen {
+		return s
+	}
+	return string(r[:maxTabNameLen-1]) + "…"
+}
+
 // Top tab bar: home tab first, then one per game. A yellow ▸ prefixes a game
 // tab when it's your turn; a yellow count beside the home icon counts your-turn
-// games not open as tabs.
+// games not open as tabs. The home cell is pinned; game tabs scroll so the
+// active one stays visible when they overflow the terminal width.
 func (m model) renderTabs() string {
 	homeStyle := tabStyle
 	if m.active == 0 {
 		homeStyle = activeTabStyle
 	}
-	cells := []string{homeStyle.Render(homeIcon)}
+	pinned := []string{homeStyle.Render(homeIcon)}
 	if n := m.hiddenTurnCount(); n > 0 {
-		cells = append(cells, turnMarkerStyle.Render(fmt.Sprintf(" %d", n)))
+		pinned = append(pinned, turnMarkerStyle.Render(fmt.Sprintf(" %d", n)))
 	}
+
+	gameCells := make([]string, len(m.games))
 	for i := range m.games {
 		g := &m.games[i]
 		style := tabStyle
 		if m.active == i+1 {
 			style = activeTabStyle
 		}
+		name := truncTabName(g.game.name)
 		if g.game.yourTurn() {
 			// Split the tab padding so the yellow ▸ abuts the name with nothing
 			// between them: arrow takes the left pad, name keeps the right pad.
 			arrow := style.PaddingRight(0).Bold(true).Foreground(lipgloss.Color("11"))
-			name := style.PaddingLeft(0)
-			cells = append(cells, lipgloss.JoinHorizontal(lipgloss.Top,
-				arrow.Render("▸"), name.Render(g.game.name)))
+			nameStyle := style.PaddingLeft(0)
+			gameCells[i] = lipgloss.JoinHorizontal(lipgloss.Top,
+				arrow.Render("▸"), nameStyle.Render(name))
 			continue
 		}
-		cells = append(cells, style.Render(g.game.name))
+		gameCells[i] = style.Render(name)
 	}
+
+	cells := append(pinned, m.scrollTabs(gameCells)...)
 	return lipgloss.JoinHorizontal(lipgloss.Top, cells...)
+}
+
+// Windows game-tab cells to those that fit the remaining width, always keeping
+// the active tab in view. Prepends/appends a dim ‹ / › when tabs are clipped.
+func (m model) scrollTabs(gameCells []string) []string {
+	if len(gameCells) == 0 {
+		return gameCells
+	}
+	pinnedW := lipgloss.Width(homeIcon) + 4 // home cell padding
+	if n := m.hiddenTurnCount(); n > 0 {
+		pinnedW += lipgloss.Width(fmt.Sprintf(" %d", n))
+	}
+	avail := m.width - pinnedW
+	const indW = 1 // width of a ‹ or › marker
+
+	widths := make([]int, len(gameCells))
+	total := 0
+	for i, c := range gameCells {
+		widths[i] = lipgloss.Width(c)
+		total += widths[i]
+	}
+	if total <= avail {
+		return gameCells // everything fits; no scrolling
+	}
+
+	// Active game index (m.active==0 means home is selected; window from start).
+	ag := 0
+	if m.active > 0 {
+		ag = m.active - 1
+	}
+
+	lo, hi := ag, ag
+	used := widths[ag]
+	// Grow right, then left; reserve room for the markers we'll add.
+	grow := func() bool {
+		room := avail
+		if lo > 0 {
+			room -= indW
+		}
+		if hi < len(gameCells)-1 {
+			room -= indW
+		}
+		if hi+1 < len(gameCells) && used+widths[hi+1] <= room {
+			hi++
+			used += widths[hi]
+			return true
+		}
+		if lo-1 >= 0 && used+widths[lo-1] <= room {
+			lo--
+			used += widths[lo]
+			return true
+		}
+		return false
+	}
+	for grow() {
+	}
+
+	marker := lipgloss.NewStyle().Foreground(dimColor)
+	windowed := append([]string{}, gameCells[lo:hi+1]...)
+	if lo > 0 {
+		windowed = append([]string{marker.Render("‹")}, windowed...)
+	}
+	if hi < len(gameCells)-1 {
+		windowed = append(windowed, marker.Render("›"))
+	}
+	return windowed
 }
 
 // @region tabs:render

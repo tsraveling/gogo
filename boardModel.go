@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/charmbracelet/lipgloss"
 )
 
 // @region board:view-model
@@ -151,8 +153,12 @@ func (b boardModel) View() string {
 	sb.WriteString(letters)
 	for y := 0; y < b.height; y++ {
 		num := b.height - y // 1 is the bottom row, climbing upward
-		left := currentTheme.label.Render(fmt.Sprintf("%*d", numW, num))
-		right := currentTheme.label.Render(fmt.Sprintf("%-*d", numW, num))
+		lbl := currentTheme.label
+		if b.interactable && b.cursorY == y {
+			lbl = b.coordActiveStyle()
+		}
+		left := lbl.Render(fmt.Sprintf("%*d", numW, num))
+		right := lbl.Render(fmt.Sprintf("%-*d", numW, num))
 		sb.WriteByte('\n')
 		sb.WriteString(left)
 		sb.WriteString(b.boardRow(y))
@@ -163,14 +169,28 @@ func (b boardModel) View() string {
 	return sb.String()
 }
 
-// Column-letter header, aligned over the board region.
+// Bold, stone-colored style for the row/column labels under the cursor.
+func (b boardModel) coordActiveStyle() lipgloss.Style {
+	return currentTheme.cursorStyle(b.cursorColor).Bold(true)
+}
+
+// Column-letter header, aligned over the board region. The letter under the
+// cursor is emphasized in the placing side's stone color.
 func (b boardModel) letterRow(numW int) string {
+	active := -1
+	if b.interactable {
+		active = b.cursorX
+	}
 	cells := make([]string, b.width)
 	for x := 0; x < b.width; x++ {
-		cells[x] = string(coordLetters[x])
+		if x == active {
+			cells[x] = b.coordActiveStyle().Render(string(coordLetters[x]))
+		} else {
+			cells[x] = currentTheme.label.Render(string(coordLetters[x]))
+		}
 	}
 	prefix := strings.Repeat(" ", numW+1)
-	return prefix + currentTheme.label.Render(strings.Join(cells, " "))
+	return prefix + strings.Join(cells, currentTheme.label.Render(" "))
 }
 
 // One board line, including the left/right margin chars. Points are spaced by
