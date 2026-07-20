@@ -41,6 +41,10 @@ func newModel() model {
 		setup:  newSetupModel(),
 		events: make(chan gameEvent, 16),
 	}
+	// Restore the chosen board theme.
+	if name := loadThemePref(); name != "" {
+		setThemeByName(name)
+	}
 	// Restore open tabs; their game models are built once the game list loads.
 	if tabs, err := loadTabs(); err == nil {
 		m.tabs = tabs

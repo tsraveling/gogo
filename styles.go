@@ -57,6 +57,9 @@ var (
 	// Finished-game marker (both players passed). Scoring is separate.
 	gameOverStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("220"))
 
+	// Theme-name label flashed over the board after a `t` cycle.
+	themeFlashStyle = lipgloss.NewStyle().Bold(true).Foreground(primaryColor)
+
 	// @region chat:style
 
 	// Chat body colors by channel, matching the composer's mode labels: main

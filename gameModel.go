@@ -36,6 +36,7 @@ type gameModel struct {
 	submitOK    bool   // brief ✓ after a confirmed remote submit
 	passConfirm bool   // pass-confirm box is open, capturing input
 	fastMode    bool   // space plays immediately, skipping the ghost step
+	themeFlash  string // theme name to flash over the board; "" when idle
 	termW       int    // last known terminal size, for chat layout
 	termH       int
 }
@@ -298,6 +299,16 @@ func navErrorCmd(idx int) tea.Cmd {
 	return tea.Tick(navErrorTTL, func(time.Time) tea.Msg { return navErrorExpiredMsg{game: idx} })
 }
 
+// How long the theme-name label flashes over the board after a `t` cycle.
+const themeFlashTTL = 800 * time.Millisecond
+
+// Dismisses the theme-name flash on a specific game.
+type themeFlashExpiredMsg struct{ game int }
+
+func themeFlashCmd(idx int) tea.Cmd {
+	return tea.Tick(themeFlashTTL, func(time.Time) tea.Msg { return themeFlashExpiredMsg{game: idx} })
+}
+
 // True while a modal-like prompt should swallow keys (tabs/quit disabled). A
 // focused chat composer captures too — tab cycles its mode, keys type.
 func (g gameModel) capturingInput() bool { return g.navMode || g.passConfirm || g.chat.focused }
@@ -311,6 +322,9 @@ func (g gameModel) Update(msg tea.Msg) (gameModel, tea.Cmd) {
 		return g, nil
 	case submitOKExpiredMsg:
 		g.submitOK = false
+		return g, nil
+	case themeFlashExpiredMsg:
+		g.themeFlash = ""
 		return g, nil
 	case spinner.TickMsg:
 		if !g.connecting && !g.committing && !g.reconnecting {
@@ -348,6 +362,10 @@ func (g gameModel) Update(msg tea.Msg) (gameModel, tea.Cmd) {
 			g.fastMode = !g.fastMode
 			g.board.ClearGhost() // drop any pending ghost when switching modes
 			return g, nil
+		case "t":
+			g.themeFlash = cycleTheme()
+			_ = saveThemePref(g.themeFlash)
+			return g, themeFlashCmd(g.idx)
 		case " ":
 			if g.fastMode {
 				return g.submitAt(g.board.cursorX, g.board.cursorY)
@@ -528,6 +546,12 @@ func (g gameModel) View(termW, termH int) string {
 		boardCol = g.centeredBoardBox(boardW, errorStyle.Render("Connection failed"))
 	case g.connecting:
 		boardCol = g.centeredBoardBox(boardW, g.spinner.View()+dimStyle.Render(" Loading board…"))
+	case g.themeFlash != "":
+		// Keep the (re-themed) board visible; flash the theme name where the
+		// control rows normally sit so you can preview the change.
+		nameRow := lipgloss.NewStyle().Width(boardW).Height(2).Align(lipgloss.Center).
+			Render(themeFlashStyle.Render("Theme: " + g.themeFlash))
+		boardCol = lipgloss.JoinVertical(lipgloss.Left, g.board.View(), nameRow)
 	default:
 		boardCol = lipgloss.JoinVertical(lipgloss.Left, g.board.View(), g.controlView(boardW))
 	}

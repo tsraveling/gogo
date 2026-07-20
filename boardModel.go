@@ -189,8 +189,11 @@ func (b boardModel) letterRow(numW int) string {
 			cells[x] = currentTheme.label.Render(string(coordLetters[x]))
 		}
 	}
-	prefix := strings.Repeat(" ", numW+1)
-	return prefix + strings.Join(cells, currentTheme.label.Render(" "))
+	// Prefix mirrors the left number column + margin; suffix mirrors the right
+	// margin + number column, so the label rows span the full board width and
+	// carry the board background into the corners.
+	pad := currentTheme.space(numW + 1)
+	return pad + strings.Join(cells, currentTheme.label.Render(" ")) + pad
 }
 
 // One board line, including the left/right margin chars. Points are spaced by
@@ -203,11 +206,12 @@ func (b boardModel) boardRow(y int) string {
 	}
 
 	cur := currentTheme.cursorStyle(b.cursorColor)
+	gap := currentTheme.space(1)
 	var sb strings.Builder
 	if cx == 0 {
 		sb.WriteString(cur.Render("["))
 	} else {
-		sb.WriteByte(' ')
+		sb.WriteString(gap)
 	}
 	for x := 0; x < b.width; x++ {
 		sb.WriteString(b.cellStr(x, y))
@@ -220,13 +224,13 @@ func (b boardModel) boardRow(y int) string {
 		case x+1 == cx:
 			sb.WriteString(cur.Render("["))
 		default:
-			sb.WriteByte(' ')
+			sb.WriteString(gap)
 		}
 	}
 	if cx == b.width-1 {
 		sb.WriteString(cur.Render("]"))
 	} else {
-		sb.WriteByte(' ')
+		sb.WriteString(gap)
 	}
 	return sb.String()
 }
