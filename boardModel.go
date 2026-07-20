@@ -1,25 +1,294 @@
 package main
 
-// boardModel renders a single game's board state. Stub for now.
+import (
+	"fmt"
+	"strconv"
+	"strings"
+
+	"github.com/charmbracelet/lipgloss"
+)
+
+// @region board:view-model
+
+// Column coordinate letters, Go convention (skips I). Max 25 wide.
+const coordLetters = "ABCDEFGHJKLMNOPQRSTUVWXYZ"
+
+// Renders a single game's board state.
 type boardModel struct {
-	width  int // board size in points (e.g. 9 for 9x9)
-	height int
+	width        int            // board size in points (e.g. 9 for 9x9)
+	height       int            // board size in points
+	grid         [][]stoneColor // current stones, [y][x]; nil renders an empty board
+	interactable bool           // show and move a cursor
+	cursorX      int
+	cursorY      int
+	cursorColor  stoneColor     // tints the cursor to the side the player places
+
+	// Uncommitted move preview: a hollow stone shown before enter commits it.
+	ghostActive bool
+	ghostX      int
+	ghostY      int
+	ghostColor  stoneColor
+
+	// Recency trail: the last few moves, newest first. Passes stay in the slot
+	// order (Q5) but match no point. captures are the points cleared last turn.
+	trail    []move
+	captures []move
 }
 
 func newBoardModel(w, h int) boardModel {
-	return boardModel{width: w, height: h}
+	return boardModel{width: w, height: h, interactable: true, cursorX: w / 2, cursorY: h / 2}
 }
 
-// renderWidth is the board rect width: w*2 points + 2 for the letter margin.
+// Feeds the renderer a stone grid ([y][x]). Reused later for replay/variants.
+func (b *boardModel) setState(grid [][]stoneColor) { b.grid = grid }
+
+// Tints the cursor to the side the local player places.
+func (b *boardModel) setCursorColor(c stoneColor) { b.cursorColor = c }
+
+// @region board:trail
+
+// Sets the recency trail (newest first, len ≤ trailLen).
+func (b *boardModel) setTrail(t []move) { b.trail = t }
+
+// Sets the points cleared on the last move (rendered with a capture mark until
+// the next snapshot).
+func (b *boardModel) setCaptures(c []move) { b.captures = c }
+
+// trailRank returns the point's recency rank (0 = freshest) or -1 if it's not on
+// the trail. The newest match wins, so a ko recapture highlights as fresh.
+func (b boardModel) trailRank(x, y int) int {
+	for i, m := range b.trail {
+		if !m.isPass() && m.x == x && m.y == y {
+			return i
+		}
+	}
+	return -1
+}
+
+// captured reports whether the point was cleared on the last move.
+func (b boardModel) captured(x, y int) bool {
+	for _, m := range b.captures {
+		if m.x == x && m.y == y {
+			return true
+		}
+	}
+	return false
+}
+
+// Stone at the point, or empty when off-grid / no grid loaded.
+func (b boardModel) stoneAt(x, y int) stoneColor {
+	if y < 0 || y >= len(b.grid) || x < 0 || x >= len(b.grid[y]) {
+		return empty
+	}
+	return b.grid[y][x]
+}
+
+// @region board:navigation
+
+// Clamps to the board and places the cursor. Also the parent-facing setter.
+func (b *boardModel) SetCursor(x, y int) {
+	b.cursorX = clamp(x, 0, b.width-1)
+	b.cursorY = clamp(y, 0, b.height-1)
+}
+
+// Steps the cursor, clamped to the board edges.
+func (b *boardModel) MoveCursor(dx, dy int) { b.SetCursor(b.cursorX+dx, b.cursorY+dy) }
+
+// Shows an uncommitted move preview at a point.
+func (b *boardModel) SetGhost(x, y int, c stoneColor) {
+	b.ghostActive = true
+	b.ghostX, b.ghostY, b.ghostColor = x, y, c
+}
+
+func (b *boardModel) ClearGhost() { b.ghostActive = false }
+
+// Parses a coordinate like "A1" (letter + row, 1 = bottom). ok is false if
+// out of range or malformed.
+func (b boardModel) parsePosition(s string) (x, y int, ok bool) {
+	s = strings.TrimSpace(strings.ToUpper(s))
+	if len(s) < 2 {
+		return 0, 0, false
+	}
+	col := strings.IndexByte(coordLetters, s[0])
+	if col < 0 || col >= b.width {
+		return 0, 0, false
+	}
+	n, err := strconv.Atoi(s[1:])
+	if err != nil || n < 1 || n > b.height {
+		return 0, 0, false
+	}
+	return col, b.height - n, true // 1 is the bottom row
+}
+
+func clamp(v, lo, hi int) int {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
+
+// @region board:render
+
+// Digits needed for the row numbers (1..height).
+func (b boardModel) numW() int { return len(strconv.Itoa(b.height)) }
+
+// Board rect width: numbers + margin on each side, points spaced by one char.
 func (b boardModel) renderWidth() int {
-	return b.width*2 + 2
+	return b.numW()*2 + b.width*2 + 1
 }
 
-// renderHeight is the board rect height: h rows + 1 for the number margin.
+// Board rect height: h point rows + a letter row top and bottom.
 func (b boardModel) renderHeight() int {
-	return b.height + 1
+	return b.height + 2
 }
 
 func (b boardModel) View() string {
-	return renderPanel("BOARD", b.renderWidth(), b.renderHeight(), boardBg)
+	numW := b.numW()
+	letters := b.letterRow(numW)
+
+	var sb strings.Builder
+	sb.WriteString(letters)
+	for y := 0; y < b.height; y++ {
+		num := b.height - y // 1 is the bottom row, climbing upward
+		lbl := currentTheme.label
+		if b.interactable && b.cursorY == y {
+			lbl = b.coordActiveStyle()
+		}
+		left := lbl.Render(fmt.Sprintf("%*d", numW, num))
+		right := lbl.Render(fmt.Sprintf("%-*d", numW, num))
+		sb.WriteByte('\n')
+		sb.WriteString(left)
+		sb.WriteString(b.boardRow(y))
+		sb.WriteString(right)
+	}
+	sb.WriteByte('\n')
+	sb.WriteString(letters)
+	return sb.String()
+}
+
+// Bold, stone-colored style for the row/column labels under the cursor.
+func (b boardModel) coordActiveStyle() lipgloss.Style {
+	return currentTheme.cursorStyle(b.cursorColor).Bold(true)
+}
+
+// Column-letter header, aligned over the board region. The letter under the
+// cursor is emphasized in the placing side's stone color.
+func (b boardModel) letterRow(numW int) string {
+	active := -1
+	if b.interactable {
+		active = b.cursorX
+	}
+	cells := make([]string, b.width)
+	for x := 0; x < b.width; x++ {
+		if x == active {
+			cells[x] = b.coordActiveStyle().Render(string(coordLetters[x]))
+		} else {
+			cells[x] = currentTheme.label.Render(string(coordLetters[x]))
+		}
+	}
+	// Prefix mirrors the left number column + margin; suffix mirrors the right
+	// margin + number column, so the label rows span the full board width and
+	// carry the board background into the corners.
+	pad := currentTheme.space(numW + 1)
+	return pad + strings.Join(cells, currentTheme.label.Render(" ")) + pad
+}
+
+// One board line, including the left/right margin chars. Points are spaced by
+// one char; the cursor's "[" and "]" occupy those gap/margin chars so column
+// alignment is unchanged.
+func (b boardModel) boardRow(y int) string {
+	cx := -1
+	if b.interactable && b.cursorY == y {
+		cx = b.cursorX
+	}
+
+	cur := currentTheme.cursorStyle(b.cursorColor)
+	gap := currentTheme.space(1)
+	var sb strings.Builder
+	if cx == 0 {
+		sb.WriteString(cur.Render("["))
+	} else {
+		sb.WriteString(gap)
+	}
+	for x := 0; x < b.width; x++ {
+		sb.WriteString(b.cellStr(x, y))
+		if x == b.width-1 {
+			break
+		}
+		switch {
+		case x == cx:
+			sb.WriteString(cur.Render("]"))
+		case x+1 == cx:
+			sb.WriteString(cur.Render("["))
+		default:
+			sb.WriteString(gap)
+		}
+	}
+	if cx == b.width-1 {
+		sb.WriteString(cur.Render("]"))
+	} else {
+		sb.WriteString(gap)
+	}
+	return sb.String()
+}
+
+// One point (via the active theme): a stone (trail-highlighted if recent) if
+// occupied, a ghost if previewed, a capture mark on a just-cleared point, else
+// a star or empty intersection.
+func (b boardModel) cellStr(x, y int) string {
+	if c := b.stoneAt(x, y); c != empty {
+		if rank := b.trailRank(x, y); rank >= 0 {
+			return currentTheme.trailCell(c, rank)
+		}
+		return currentTheme.stoneCell(c)
+	}
+	if b.ghostActive && b.ghostX == x && b.ghostY == y {
+		return currentTheme.ghostCell(b.ghostColor)
+	}
+	if b.captured(x, y) {
+		return currentTheme.captureCell()
+	}
+	if b.isStar(x, y) {
+		return currentTheme.grid.Render(currentTheme.starGlyph)
+	}
+	return currentTheme.grid.Render(currentTheme.emptyGlyph)
+}
+
+// Star point (hoshi) test. Square boards only; matches standard 9/13/19 layouts.
+func (b boardModel) isStar(x, y int) bool {
+	if b.width != b.height {
+		return false
+	}
+	s := b.width
+	var edge int
+	switch {
+	case s >= 13:
+		edge = 3
+	case s >= 7:
+		edge = 2
+	default:
+		return false
+	}
+	onLine := func(v int) bool { return v == edge || v == s-1-edge }
+	center := -1
+	if s%2 == 1 {
+		center = s / 2
+	}
+
+	if center >= 0 && x == center && y == center {
+		return true // tengen / center
+	}
+	if onLine(x) && onLine(y) {
+		return true // corner stars
+	}
+	// Side-midpoint stars appear on 19x19 only.
+	if s >= 19 && center >= 0 {
+		if (onLine(x) && y == center) || (x == center && onLine(y)) {
+			return true
+		}
+	}
+	return false
 }
