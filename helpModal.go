@@ -33,6 +33,7 @@ var gameHelpRows = append([]helpRow{
 	{"p", "pass"},
 	{"g", "go to coordinate"},
 	{"t", "cycle board theme"},
+	{"T", "toggle stone size"},
 	{"", "Chat"},
 	{"/", "start chatting"},
 	{"esc", "stop chatting"},
@@ -52,8 +53,9 @@ var homeHelpRows = append([]helpRow{
 	{"Q", "sign out"},
 }, globalHelpRows...)
 
-// Full-screen centered help panel for the given rows.
-func helpView(rows []helpRow, w, h int) string {
+// Full-screen centered help panel for the given rows. An optional note is shown
+// as a footnote above the close hint.
+func helpView(rows []helpRow, note string, w, h int) string {
 	keyStyle := lipgloss.NewStyle().Foreground(primaryColor)
 	descStyle := lipgloss.NewStyle().Foreground(unemphColor)
 
@@ -69,6 +71,9 @@ func helpView(rows []helpRow, w, h int) string {
 		fmt.Fprintf(&b, "%s  %s\n",
 			keyStyle.Render(fmt.Sprintf("%-14s", r.key)),
 			descStyle.Render(r.desc))
+	}
+	if note != "" {
+		fmt.Fprintf(&b, "\n%s\n", descStyle.Render(note))
 	}
 	fmt.Fprintf(&b, "\n%s", dimStyle.Italic(true).Render("any key to close"))
 

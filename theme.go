@@ -6,6 +6,86 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// @region board:stone-size
+
+// stoneShape is how a side's stone renders. Filled/hollow are circles that pick
+// their glyph from the global stone size; shapeLiteral is a size-independent
+// character (e.g. GnuGo's X/O).
+type stoneShape int
+
+const (
+	shapeFilled stoneShape = iota
+	shapeHollow
+	shapeLiteral
+)
+
+// stoneSize scales the circle stones. Regular (default) is single-width-safe on
+// nearly every terminal; large uses ⬤/◯, which some fonts render double-width
+// and overflow the grid.
+type stoneSize int
+
+const (
+	stoneRegular stoneSize = iota
+	stoneLarge
+)
+
+// Circle glyphs by fill and size.
+const (
+	filledRegular = "●"
+	filledLarge   = "⬤"
+	hollowRegular = "○"
+	hollowLarge   = "◯"
+)
+
+// Active stone size, shared by every theme.
+var currentStoneSize = stoneRegular
+
+// Resolves a shape to its glyph under the current stone size; literal shapes
+// return their verbatim glyph unchanged.
+func stoneGlyph(shape stoneShape, literal string) string {
+	switch shape {
+	case shapeFilled:
+		if currentStoneSize == stoneLarge {
+			return filledLarge
+		}
+		return filledRegular
+	case shapeHollow:
+		if currentStoneSize == stoneLarge {
+			return hollowLarge
+		}
+		return hollowRegular
+	default:
+		return literal
+	}
+}
+
+// Human-readable label for the current stone size (flash + persisted pref).
+func stoneSizeName() string {
+	if currentStoneSize == stoneLarge {
+		return "Large"
+	}
+	return "Regular"
+}
+
+// Toggles between regular and large stones; returns the new size's name.
+func toggleStoneSize() string {
+	if currentStoneSize == stoneLarge {
+		currentStoneSize = stoneRegular
+	} else {
+		currentStoneSize = stoneLarge
+	}
+	return stoneSizeName()
+}
+
+// Restores stone size from a persisted name (no-op on unknown; defaults regular).
+func setStoneSizeByName(name string) {
+	if name == "Large" {
+		currentStoneSize = stoneLarge
+		return
+	}
+	currentStoneSize = stoneRegular
+}
+
 // @region board:theme
 
 // A board's characters and colors. Rendering goes through currentTheme rather
@@ -18,8 +98,13 @@ type boardTheme struct {
 	// grid gaps and margins are painted with it (see boardTheme.space).
 	bg lipgloss.Color
 
-	blackGlyph string // black stone
-	whiteGlyph string // white stone
+	// How each side's stone is drawn. Circle shapes (filled/hollow) resolve to a
+	// glyph via the global stone size; shapeLiteral uses the *Glyph field verbatim.
+	blackShape stoneShape
+	whiteShape stoneShape
+
+	blackGlyph string // black stone, only when blackShape == shapeLiteral
+	whiteGlyph string // white stone, only when whiteShape == shapeLiteral
 	emptyGlyph string // empty intersection
 	starGlyph  string // star point (hoshi)
 
@@ -49,11 +134,19 @@ type boardTheme struct {
 // normal foreground over the trail background, so a stone keeps its color and
 // only the background marks recency.
 func (t boardTheme) trailCell(c stoneColor, rank int) string {
-	st, g := t.black, t.blackGlyph
+	st := t.black
 	if c == white {
-		st, g = t.white, t.whiteGlyph
+		st = t.white
 	}
-	return lipgloss.NewStyle().Bold(true).Foreground(st.GetForeground()).Background(t.trail[rank]).Render(g)
+	return lipgloss.NewStyle().Bold(true).Foreground(st.GetForeground()).Background(t.trail[rank]).Render(t.glyph(c))
+}
+
+// Glyph for a side's stone under the current shape + stone size.
+func (t boardTheme) glyph(c stoneColor) string {
+	if c == white {
+		return stoneGlyph(t.whiteShape, t.whiteGlyph)
+	}
+	return stoneGlyph(t.blackShape, t.blackGlyph)
 }
 
 // Styled mark for a point whose stone was captured on the last move.
@@ -84,18 +177,18 @@ func (t boardTheme) cursorStyle(c stoneColor) lipgloss.Style {
 // Styled glyph for a committed stone.
 func (t boardTheme) stoneCell(c stoneColor) string {
 	if c == white {
-		return t.white.Render(t.whiteGlyph)
+		return t.white.Render(t.glyph(white))
 	}
-	return t.black.Render(t.blackGlyph)
+	return t.black.Render(t.glyph(black))
 }
 
 // Styled glyph for an uncommitted placeholder: the stone over the placeholder tile.
 func (t boardTheme) ghostCell(c stoneColor) string {
-	st, g := t.black, t.blackGlyph
+	st := t.black
 	if c == white {
-		st, g = t.white, t.whiteGlyph
+		st = t.white
 	}
-	return st.Background(t.placeholder.GetBackground()).Render(g)
+	return st.Background(t.placeholder.GetBackground()).Render(t.glyph(c))
 }
 
 // Bakes a board background into every on-board style so grid cells, labels, and
@@ -112,14 +205,14 @@ func withBG(t boardTheme, bg lipgloss.Color) boardTheme {
 	return t
 }
 
-// "Default": both sides filled ⬤, correct polarity (black darker, white bright),
-// on a dim-yellow grid for the traditional go-board feel. Placeholder sits on a
-// soft dark-blue tile.
+// "Default": both sides filled discs, correct polarity (black darker, white
+// bright), on a dim-yellow grid for the traditional go-board feel. Placeholder
+// sits on a soft dark-blue tile.
 func defaultTheme() boardTheme {
 	return boardTheme{
 		name:        "Default",
-		blackGlyph:  "⬤",
-		whiteGlyph:  "⬤",
+		blackShape:  shapeFilled,
+		whiteShape:  shapeFilled,
 		emptyGlyph:  "·",
 		starGlyph:   "+",
 		black:       lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("240")), // dark gray
@@ -161,7 +254,7 @@ func traditionalTheme() boardTheme {
 func hollowBlackTheme() boardTheme {
 	t := defaultTheme()
 	t.name = "Hollow Black"
-	t.blackGlyph = "◯"
+	t.blackShape = shapeHollow
 	return t
 }
 
@@ -170,8 +263,8 @@ func hollowBlackTheme() boardTheme {
 func hollowWhiteTheme() boardTheme {
 	t := defaultTheme()
 	t.name = "Hollow White"
-	t.blackGlyph = "⬤"
-	t.whiteGlyph = "◯"
+	t.blackShape = shapeFilled
+	t.whiteShape = shapeHollow
 	t.black = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("16"))  // solid black
 	t.white = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("245")) // gray, visible on white
 	t.grid = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
@@ -187,6 +280,8 @@ func gnugoTheme() boardTheme {
 	st := lipgloss.NewStyle().Bold(true).Foreground(green)
 	return boardTheme{
 		name:         "GnuGo",
+		blackShape:   shapeLiteral,
+		whiteShape:   shapeLiteral,
 		blackGlyph:   "X",
 		whiteGlyph:   "O",
 		emptyGlyph:   ".",

@@ -46,6 +46,10 @@ func newModel() model {
 	if name := loadThemePref(); name != "" {
 		setThemeByName(name)
 	}
+	// Restore the chosen stone size.
+	if size := loadStoneSizePref(); size != "" {
+		setStoneSizeByName(size)
+	}
 	// Restore open tabs; their game models are built once the game list loads.
 	if tabs, err := loadTabs(); err == nil {
 		m.tabs = tabs
@@ -771,11 +775,12 @@ func (m model) View() string {
 		return m.setup.View(m.width, m.height)
 	}
 	if m.showHelp {
-		rows := homeHelpRows
+		rows, note := homeHelpRows, ""
 		if m.active > 0 {
 			rows = gameHelpRows
+			note = "Large stones (T) need a terminal font that renders ⬤/◯ single-width; otherwise use Regular."
 		}
-		return helpView(rows, m.width, m.height)
+		return helpView(rows, note, m.width, m.height)
 	}
 
 	tabs := m.renderTabs()

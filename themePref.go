@@ -42,3 +42,38 @@ func saveThemePref(name string) error {
 	}
 	return os.WriteFile(path, []byte(name), 0o600)
 }
+
+// Stores the chosen stone size ("Regular"/"Large"), one line, beside the theme.
+const stoneSizeFileName = "stonesize"
+
+func stoneSizePrefPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".config", "gogo", stoneSizeFileName), nil
+}
+
+// Reads the persisted stone size; empty string when unset.
+func loadStoneSizePref() string {
+	path, err := stoneSizePrefPath()
+	if err != nil {
+		return ""
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
+func saveStoneSizePref(name string) error {
+	path, err := stoneSizePrefPath()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(name), 0o600)
+}

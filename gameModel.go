@@ -36,7 +36,7 @@ type gameModel struct {
 	submitOK    bool   // brief ✓ after a confirmed remote submit
 	passConfirm bool   // pass-confirm box is open, capturing input
 	fastMode    bool   // space plays immediately, skipping the ghost step
-	themeFlash  string // theme name to flash over the board; "" when idle
+	themeFlash  string // theme/size label to flash over the board; "" when idle
 	termW       int    // last known terminal size, for chat layout
 	termH       int
 }
@@ -363,8 +363,14 @@ func (g gameModel) Update(msg tea.Msg) (gameModel, tea.Cmd) {
 			g.board.ClearGhost() // drop any pending ghost when switching modes
 			return g, nil
 		case "t":
-			g.themeFlash = cycleTheme()
-			_ = saveThemePref(g.themeFlash)
+			name := cycleTheme()
+			g.themeFlash = "Theme: " + name
+			_ = saveThemePref(name)
+			return g, themeFlashCmd(g.idx)
+		case "T":
+			size := toggleStoneSize()
+			g.themeFlash = "Stones: " + size
+			_ = saveStoneSizePref(size)
 			return g, themeFlashCmd(g.idx)
 		case " ":
 			if g.fastMode {
@@ -547,10 +553,10 @@ func (g gameModel) View(termW, termH int) string {
 	case g.connecting:
 		boardCol = g.centeredBoardBox(boardW, g.spinner.View()+dimStyle.Render(" Loading board…"))
 	case g.themeFlash != "":
-		// Keep the (re-themed) board visible; flash the theme name where the
+		// Keep the re-styled board visible; flash the theme/size label where the
 		// control rows normally sit so you can preview the change.
 		nameRow := lipgloss.NewStyle().Width(boardW).Height(2).Align(lipgloss.Center).
-			Render(themeFlashStyle.Render("Theme: " + g.themeFlash))
+			Render(themeFlashStyle.Render(g.themeFlash))
 		boardCol = lipgloss.JoinVertical(lipgloss.Left, g.board.View(), nameRow)
 	default:
 		boardCol = lipgloss.JoinVertical(lipgloss.Left, g.board.View(), g.controlView(boardW))
