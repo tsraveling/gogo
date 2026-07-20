@@ -2,6 +2,16 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## v0.1.0 - 2026-07-20
+#### Features
+- MVP (#1) - (934ffa3) - Tim Raveling
+#### Bug Fixes
+- initial setup - (c7e8463) - Tim Raveling
+#### Miscellaneous Chores
+- gitignore update - (13b37de) - Tim Raveling
+
+- - -
+
 ## v0.0.1 - 2026-07-15
 #### Bug Fixes
 - initial cog commit - (56458dd) - Tim Raveling
