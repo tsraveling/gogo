@@ -81,7 +81,8 @@ func (h *homeModel) rebuild() {
 		e = append(e, homeEntry{kind: entryAction, action: signInOption})
 	}
 	e = append(e, homeEntry{kind: entryAction, action: hotseatOption})
-	e = append(e, homeEntry{kind: entryAction, action: gnuGoOption})
+	// TODO: re-enable GnuGo option once the backend is wired up.
+	// e = append(e, homeEntry{kind: entryAction, action: gnuGoOption})
 	h.entries = e
 	h.clampCursor()
 }
@@ -246,7 +247,7 @@ func (h homeModel) View(w, hgt int) string {
 		case entrySpacer:
 			lines = append(lines, "")
 		case entryLoading:
-			lines = append(lines, gutter(h.spinner.View()+gameMetaStyle.Render(" Loading games…"), false))
+			lines = append(lines, gutter(h.spinner.View()+gameMetaStyle.Render(" Loading games…"), false, false))
 		}
 		if i == h.cursor {
 			selStart, selCount = start, len(lines)-start
@@ -293,7 +294,7 @@ func (h homeModel) statusBar(w int) string {
 	case h.authPending:
 		return dimStyle.Width(w).Align(lipgloss.Center).Render("Logging in …")
 	case h.authed:
-		refresh := dimStyle.Width(w).Align(lipgloss.Center).Render("r to refresh")
+		refresh := dimStyle.Width(w).Align(lipgloss.Center).Render("r to refresh, ? for help")
 		login := dimStyle.Width(w).Align(lipgloss.Center).
 			Render("Logged in as " + h.username + ". Q to logout.")
 		return lipgloss.JoinVertical(lipgloss.Left, refresh, login)
@@ -329,7 +330,7 @@ func renderGameEntry(g game, selected bool) string {
 			playerName(g, white) + " " +
 			rankParen("○", g.white.rankString())
 	}
-	return gutter(lipgloss.JoinVertical(lipgloss.Left, line1, line2), selected)
+	return gutter(lipgloss.JoinVertical(lipgloss.Left, line1, line2), selected, g.yourTurn())
 }
 
 // A rank paren with the stone glyph highlighted white: e.g. "(○ 25 kyu)".
@@ -353,23 +354,28 @@ func playerName(g game, side stoneColor) string {
 // A single-line action row.
 func renderActionEntry(label string, selected bool) string {
 	if selected {
-		return selectedItemStyle.Render("> " + label)
+		return selectedItemStyle.Render(">") + "  " + selectedItemStyle.Render(label)
 	}
-	return itemStyle.Render("  " + label)
+	return itemStyle.Render("   " + label)
 }
 
-// Prefixes a block with a selection marker on the first line, aligning the rest.
-func gutter(block string, selected bool) string {
-	marker := "  "
+// Prefixes a block with the 3-col left gutter: a selection caret, a gap, then
+// the your-turn marker immediately left of the content. Continuation lines align.
+func gutter(block string, selected, yourTurn bool) string {
+	sel := " "
 	if selected {
-		marker = selectedItemStyle.Render("> ")
+		sel = selectedItemStyle.Render(">")
+	}
+	turn := " "
+	if yourTurn {
+		turn = turnMarkerStyle.Render("▸")
 	}
 	lines := strings.Split(block, "\n")
 	for i := range lines {
 		if i == 0 {
-			lines[i] = marker + lines[i]
+			lines[i] = sel + " " + turn + lines[i]
 		} else {
-			lines[i] = "  " + lines[i]
+			lines[i] = "   " + lines[i]
 		}
 	}
 	return strings.Join(lines, "\n")

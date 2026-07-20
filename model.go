@@ -27,6 +27,7 @@ type model struct {
 	showAuth    bool // modal open, captures all input
 	setup       setupModel
 	showSetup   bool // setup modal open, captures all input
+	showHelp    bool // help modal open; any key closes it
 	ogs         ogsModel
 	authPending bool // stored login present, validating at launch
 	polling     bool // the 20s overview poll loop is running
@@ -545,6 +546,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, cmd
 	case tea.KeyMsg:
+		// Help is the top-most modal: any key dismisses it and is consumed.
+		if m.showHelp {
+			m.showHelp = false
+			return m, nil
+		}
 		// Modal captures all input; tabs and quit keys are disabled.
 		if m.showAuth {
 			var cmd tea.Cmd
@@ -567,6 +573,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var cmd tea.Cmd
 			m.home, cmd = m.home.Update(msg)
 			return m, cmd
+		}
+		// ?: open the help modal for the active view. Placed after the input-
+		// capture guards so it types normally into chat / prompts.
+		if msg.String() == "?" {
+			m.showHelp = true
+			return m, nil
 		}
 		// Q (shift+q) logs out when authenticated; guarded key to avoid misfires.
 		if msg.String() == "Q" && m.ogs.authenticated() {
@@ -757,6 +769,13 @@ func (m model) View() string {
 	}
 	if m.showSetup {
 		return m.setup.View(m.width, m.height)
+	}
+	if m.showHelp {
+		rows := homeHelpRows
+		if m.active > 0 {
+			rows = gameHelpRows
+		}
+		return helpView(rows, m.width, m.height)
 	}
 
 	tabs := m.renderTabs()
