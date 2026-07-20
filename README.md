@@ -2,6 +2,8 @@
 
 Play Go in your terminal — local games and online play on [OGS](https://online-go.com).
 
+![A gif demo of the GoGo terminal client. Demonstrates switching between different game tabs and toggling through various themes.](docs/gogo-demo.gif)
+
 ## Installation
 
 ### Homebrew (macOS)
